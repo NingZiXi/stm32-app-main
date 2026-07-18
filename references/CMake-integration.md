@@ -1,10 +1,10 @@
-# CMake `add_subdirectory(main)` + `add_subdirectory(Lib/stm_log)` 集成方法
+# CMake `add_subdirectory(main)` + FetchContent(stm_log → Lib/stm_log) 集成方法
 
 ## 本 skill 改 / 不改的 CMake 文件
 
 | 文件 | 是否改 | 原因 |
 |------|--------|------|
-| 根 `CMakeLists.txt` | ✅ 加 2 行：`add_subdirectory(Lib/stm_log)` + `add_subdirectory(main)` | CubeMX 不重写它 |
+| 根 `CMakeLists.txt` | ✅ 加 `FetchContent_Declare(stm_log, SOURCE_DIR=Lib/stm_log)` + `FetchContent_MakeAvailable` + `add_subdirectory(main)` | CubeMX 不重写它 |
 | `cmake/stm32cubemx/CMakeLists.txt` | ❌ | CubeMX 整段重写 |
 | `cmake/` 下其他文件 | ❌ | 同上 |
 | `Core/` 下任何 `.c` / `.h` | ❌ | 同上 |
@@ -27,12 +27,13 @@ add_subdirectory(cmake/stm32cubemx)   # CubeMX 生成的
 include(FetchContent)
 FetchContent_Declare(
     stm_log
-    GIT_REPOSITORY https://github.com/NingZiXi/stm_log.git
+    # 默认走 Gitee 镜像（国内访问快）；如需 GitHub 把下一行注释掉、放开下一行
+    GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
+    #GIT_REPOSITORY https://github.com/NingZiXi/stm_log.git     # 备选：境外 / GitHub 直连
     GIT_TAG        v2.2.0
+    SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log   # 关键：clone 到工程内 Lib/stm_log/
 )
-FetchContent_MakeAvailable(stm_log)   # 联网环境自动 clone
-
-# 或：add_subdirectory(Lib/stm_log)  # 手动 clone（离线 / 代理环境）
+FetchContent_MakeAvailable(stm_log)   # 联网环境自动 clone；目录已存在则跳过
 
 add_subdirectory(main)                # ← 本 skill 加的
 ```
@@ -42,11 +43,11 @@ add_subdirectory(main)                # ← 本 skill 加的
 1. 进入 `main/`
 2. 执行 `main/CMakeLists.txt`
 3. 里面的 `target_sources` / `target_include_directories` / `target_link_libraries` 作用到顶层 `${CMAKE_PROJECT_NAME}`
-4. `target_link_libraries(... stm_log)` 让 `stm_log` target（FetchContent 下载的源码 / Lib/stm_log/）被链入
+4. `target_link_libraries(... stm_log)` 让 `stm_log` target（FetchContent 下载到 `Lib/stm_log/` 的源码）被链入
 
 它**不**创建独立目标，只切换作用域。
 
-FetchContent 详细机制：首次 configure 时把库源码 clone 到 `<build>/_deps/stm_log-src/`，后续 configure 复用已下载内容；离线 / 代理环境下 clone 失败 → 改用方式 B 手动 git clone 到 `Lib/stm_log/`。
+FetchContent 详细机制：通过 `SOURCE_DIR` 把源码直接 clone 到 `<root>/Lib/stm_log/`（不是默认的 `<build>/_deps/stm_log-src/`），源码落在工程内便于 IDE 索引 / 版本管理。目录已存在则跳过拉取复用现有内容；离线 / 代理环境下手动 `git clone ... <root>/Lib/stm_log` 后同样走复用流程。
 
 ## 入口挂载点
 
@@ -111,7 +112,8 @@ cmake --build <root>/build
 
 错误对照：
 - `main/ not loaded by top-level CMake. Skipping app_main build.` → 根 `CMakeLists.txt` 没加 `add_subdirectory(main)`
-- `Cannot find source file: stm_log.c` → `Lib/stm_log/` 没克隆或路径错
+- `Cannot find source file: stm_log.c` → `Lib/stm_log/` 没克隆或路径错（检查 `SOURCE_DIR` 是否指到工程内 `Lib/stm_log/`）
+- `Failed to clone ... gitee.com/nzxhg/stm_log.git` → Gitee / 代理异常；手动 `git clone https://gitee.com/nzxhg/stm_log <root>/Lib/stm_log`，FetchContent 会跳过拉取复用；或切回 GitHub：把 `GIT_REPOSITORY` 改 `https://github.com/NingZiXi/stm_log.git`
 - `undefined reference to app_main` → 根 CMakeLists.txt 没加 `add_subdirectory(main)`
 - `undefined reference to stm_log_init` → `main/CMakeLists.txt` 没 link `stm_log`（模板已加，手改时容易漏）
 - `undefined reference to osDelay` / `xPortGetFreeHeapSize` → 错把 FreeRTOS 模板塞到裸机工程
@@ -142,11 +144,20 @@ cmake --build <root>/build
 
 ## stm_log 库升级
 
+源码已经落在工程内 `Lib/stm_log/`，升级有两条路：
+
 ```bash
+# 方式 A：手动 git pull（SOURCE_DIR 已存在，FetchContent 不会重新覆盖）
 cd Lib/stm_log && git pull
 ```
 
-升级到新版本直接重编译即可（库的 ABI 向后兼容）。
+```bash
+# 方式 B：让 FetchContent 重新拉（先清空 Lib/stm_log/，再 cmake configure）
+rm -rf Lib/stm_log/* Lib/stm_log/.git
+cmake -S . -B build   # 触发 FetchContent 重新 clone 到 Lib/stm_log/
+```
+
+升级到新版本直接重编译即可（库的 ABI 向后兼容）。`SOURCE_DIR` 已存在的库不会被 FetchContent 覆盖，所以手动 `git pull` 是最稳的方式。
 
 ## FreeRTOS / CMSIS-OS 兼容
 
