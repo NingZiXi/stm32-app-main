@@ -1,10 +1,10 @@
-# CMake `add_subdirectory(main)` 集成方法
+# CMake `add_subdirectory(main)` + `add_subdirectory(Lib/stm_log)` 集成方法
 
 ## 本 skill 改 / 不改的 CMake 文件
 
 | 文件 | 是否改 | 原因 |
 |------|--------|------|
-| 根 `CMakeLists.txt` | ✅ 加一行 `add_subdirectory(main)` | CubeMX 不重写它 |
+| 根 `CMakeLists.txt` | ✅ 加 2 行：`add_subdirectory(Lib/stm_log)` + `add_subdirectory(main)` | CubeMX 不重写它 |
 | `cmake/stm32cubemx/CMakeLists.txt` | ❌ | CubeMX 整段重写 |
 | `cmake/` 下其他文件 | ❌ | 同上 |
 | `Core/` 下任何 `.c` / `.h` | ❌ | 同上 |
@@ -14,7 +14,7 @@ CubeMX 重生成覆盖的文件：
 - `Core/Inc/*.h`、`Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_conf.h`
 - `cmake/stm32cubemx/CMakeLists.txt`、`*.ioc`
 
-CubeMX 不碰：`CMakeLists.txt` 根文件、所有用户自建目录（`main/` 等）。
+CubeMX 不碰：`CMakeLists.txt` 根文件、所有用户自建目录（`main/` / `Lib/stm_log/` 等）。
 
 → 根 `CMakeLists.txt` 是业务层唯一的稳定立足点。
 
@@ -23,6 +23,17 @@ CubeMX 不碰：`CMakeLists.txt` 根文件、所有用户自建目录（`main/` 
 ```cmake
 # 根 CMakeLists.txt
 add_subdirectory(cmake/stm32cubemx)   # CubeMX 生成的
+
+include(FetchContent)
+FetchContent_Declare(
+    stm_log
+    GIT_REPOSITORY https://github.com/NingZiXi/stm_log.git
+    GIT_TAG        v2.2.0
+)
+FetchContent_MakeAvailable(stm_log)   # 联网环境自动 clone
+
+# 或：add_subdirectory(Lib/stm_log)  # 手动 clone（离线 / 代理环境）
+
 add_subdirectory(main)                # ← 本 skill 加的
 ```
 
@@ -30,9 +41,12 @@ add_subdirectory(main)                # ← 本 skill 加的
 
 1. 进入 `main/`
 2. 执行 `main/CMakeLists.txt`
-3. 里面的 `target_sources` / `target_include_directories` 作用到顶层 `${CMAKE_PROJECT_NAME}`
+3. 里面的 `target_sources` / `target_include_directories` / `target_link_libraries` 作用到顶层 `${CMAKE_PROJECT_NAME}`
+4. `target_link_libraries(... stm_log)` 让 `stm_log` target（FetchContent 下载的源码 / Lib/stm_log/）被链入
 
 它**不**创建独立目标，只切换作用域。
+
+FetchContent 详细机制：首次 configure 时把库源码 clone 到 `<build>/_deps/stm_log-src/`，后续 configure 复用已下载内容；离线 / 代理环境下 clone 失败 → 改用方式 B 手动 git clone 到 `Lib/stm_log/`。
 
 ## 入口挂载点
 
@@ -48,7 +62,7 @@ void StartDefaultTask(void *argument) {
 }
 ```
 
-模板 `assets/app_main.c`：`osDelay` + `xPortGetFreeHeapSize`。
+模板 `assets/app_main.c`：`osDelay` + `xPortGetFreeHeapSize` + `stm_log_init(&huart1, ...)`。
 
 ### 裸机
 
@@ -97,7 +111,9 @@ cmake --build <root>/build
 
 错误对照：
 - `main/ not loaded by top-level CMake. Skipping app_main build.` → 根 `CMakeLists.txt` 没加 `add_subdirectory(main)`
-- `undefined reference to app_main` → 同上
+- `Cannot find source file: stm_log.c` → `Lib/stm_log/` 没克隆或路径错
+- `undefined reference to app_main` → 根 CMakeLists.txt 没加 `add_subdirectory(main)`
+- `undefined reference to stm_log_init` → `main/CMakeLists.txt` 没 link `stm_log`（模板已加，手改时容易漏）
 - `undefined reference to osDelay` / `xPortGetFreeHeapSize` → 错把 FreeRTOS 模板塞到裸机工程
 - `undefined reference to HAL_Delay` → 错把裸机模板塞到 FreeRTOS 工程
 
@@ -123,6 +139,14 @@ cmake --build <root>/build
 ### `main/CMakeLists.txt` 是 CubeMX 的一部分
 
 不是。`main/` 完全是你自己创建的目录，CubeMX 不知道它的存在。
+
+## stm_log 库升级
+
+```bash
+cd Lib/stm_log && git pull
+```
+
+升级到新版本直接重编译即可（库的 ABI 向后兼容）。
 
 ## FreeRTOS / CMSIS-OS 兼容
 
