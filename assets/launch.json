@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "J-Link RTT",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "jlink",
+            "serverpath": "D:/SEGGER/JLink/JLinkGDBServerCL.exe",
+            "serverArgs": [
+                "-if", "SWD",
+                "-speed", "4000"
+            ],
+            "device": "STM32F407VE",
+            "executable": "${command:cmake.launchTargetPath}",
+            "preLaunchTask": "build-debug",
+            "runToEntryPoint": "main",
+            "rttConfig": {
+                "enabled": true,
+                "address": "auto",
+                "decoders": [
+                    {
+                        "label": "RTT Console",
+                        "port": 0,
+                        "type": "console"
+                    }
+                ]
+            },
+            "showDevDebugOutput": "none",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
