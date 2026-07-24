@@ -28,7 +28,7 @@ description: 把 STM32CubeMX + CMake 工程改造成「main/ 子模块」结构�
         ├── Core/Src/main.c                  # CubeMX 生成的 main()，调用 app_main()
         ├── cmake/stm32cubemx/CMakeLists.txt # 不动
         ├── Lib/                             # 新增（FetchContent 把源码拉到这里）
-        │   └── stm_log/                     # clone 自 https://gitee.com/nzxhg/stm_log @ v2.3.0
+        │   └── stm_log/                     # clone 自 https://gitee.com/nzxhg/stm_log @ v2.3.1
         ├── main/                            # 新增
         │   ├── CMakeLists.txt
         │   └── app_main.c
@@ -83,7 +83,7 @@ test -d <root>/Lib/stm_log && echo STM_LOG_LOCAL_OVERRIDE || echo STM_LOG_FETCH
 
 ### §1 stm_log 依赖（FetchContent 拉取到工程内 `Lib/stm_log/`）
 
-stm_log 库提供 `LOGI/LOGW/LOGE/...` 宏。**首次 build 时 CMake FetchContent 自动从 https://gitee.com/nzxhg/stm_log clone 到 `<root>/Lib/stm_log/`**（不是 `<build>/_deps/`），版本锁定 `v2.3.0`。源码落在工程目录内，便于 IDE 索引 / 版本管理 / 离线复用。
+stm_log 库提供 `LOGI/LOGW/LOGE/...` 宏。**首次 build 时 CMake FetchContent 自动从 https://gitee.com/nzxhg/stm_log clone 到 `<root>/Lib/stm_log/`**（不是 `<build>/_deps/`），版本锁定 `v2.3.1`。源码落在工程目录内，便于 IDE 索引 / 版本管理 / 离线复用。
 
 > GitHub 镜像：https://github.com/NingZiXi/stm_log（境外或 GitHub 直连环境下用）；改 `GIT_REPOSITORY` 那行即可，tag 与 commit 都同步。
 >
@@ -101,6 +101,8 @@ AskUserQuestion 询问,选项：
 | **SEGGER RTT** | §2B RTT 模板：`app_main_rtt.c` / `app_main_bare_rtt.c`（**通用** `CMakeLists.txt`，内含 `if(TARGET segger_rtt)` 条件 link） |
 
 > **RTT 模板不需要 UART**：`stm_log_init_output(rtt_output, ...)` 一步完成 init + 切后端（stm_log v2.3.0+），不绑 UART；切回 UART 把那一行换成 `stm_log_init(&huart1, STM_LOG_LVL_INFO)` 即可。UART 模板仍走 `stm_log_init(&huart1, ...)`。
+>
+> **stm_log v2.3.1 新增可配置 HAL 头文件**：通过 `STM_LOG_HAL_HEADER` 在工程 CMake 中指定所属 STM32 家族的 HAL 头文件名（默认 `stm32f4xx_hal.h`）。详见 [references/stm-log-config.md](references/stm-log-config.md)。
 
 ### §1.6 RTT 分支专属：SEGGER RTT 库(关注点分离,FetchContent + 用户 fork 仓库提供 CMakeLists_rtt.txt)
 
@@ -155,6 +157,8 @@ void app_main(void) {
 ⚠ **stm_log 宏使用约束**：`fmt` 必须是字符串字面量；`tag` 可为变量或字面量；依赖 GCC `##__VA_ARGS__`，所以工程需用 `gnu11` 或更高（STM32CubeMX 默认 GCC 12 + `-std=gnu11` 已满足）。
 
 ⚠ **stm_log 库默认 UART**：`stm_log_init(&huart1, ...)` 假设你的工程 UART1 是调试串口。如果用其他 UART，改成对应 huart。**stm_log v2.3.0+** 新增 `stm_log_init_output(cb, level)` 一步完成 init + 装 callback；RTT/SWO/USB CDC 等非 UART 后端推荐用新 API（不传 UART）。
+>
+> ⚠ **stm_log v2.3.1 新增可配置 HAL 头文件**：通过 `STM_LOG_HAL_HEADER` 在工程 CMake 中指定所属 STM32 家族的 HAL 头文件名（默认 `stm32f4xx_hal.h`）。STM32G0/STM32H7/STM32U5 等非 F4 工程必须显式覆盖。详见 [references/stm-log-config.md](references/stm-log-config.md)。
 
 ⚠ **`huart1` 的来源（兼容两种 CubeMX 代码生成模式）**：模板顶部自带 `extern UART_HandleTypeDef huart1;`，**不要** `#include "usart.h"`。原因：CubeMX 在 Project Settings → Code Generator 下有一个开关 "Generate peripheral initialization as a pair of '.c/.h' files per peripheral"——
 - **开启**：`huart1` 在 `usart.h` 里 extern（分离模式），我们的 extern 多余但合法
@@ -201,7 +205,7 @@ void app_main(void) {
 ⚠ **顺序铁律**：`SEGGER_RTT_Init()` 必须在 `stm_log_init_output(...)` **之前**。否则回调指向未初始化的 control block，LOGx 写入全丢。
 
 ⚠ **stm_log 版本要求**：RTT 模板用 `stm_log_init_output()`，要求 stm_log **v2.3.0+**。如果你工程的 FetchContent 拉的是 v2.2.0（旧），模板会编译失败（`undefined reference to stm_log_init_output`）。两种解法：
-- 把根 `CMakeLists.txt` 的 `GIT_TAG v2.2.0` 改成 `v2.3.0`（推荐）
+- 把根 `CMakeLists.txt` 的 `GIT_TAG v2.2.0` 改成 `v2.3.1`（推荐）
 - 或者临时回退到 UART 模板：`stm_log_init(&huart1, level)` + `stm_log_set_output(rtt_output)`（v2.2.0 兼容）
 
 ⚠ **关注点分离**：`main/CMakeLists.txt` 不加 RTT 源、不加 RTT include path —— RTT 源 + 头文件路径全部由 `Lib/segger_rtt/CMakeLists_rtt.txt`(用户 fork 仓库自带)封装到 `segger_rtt` target,main 只 link target。
@@ -221,7 +225,7 @@ FetchContent_Declare(
     # 默认走 Gitee 镜像（国内访问快）；如需 GitHub，把下一行注释掉、放开下一行的下一行
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
     #GIT_REPOSITORY https://github.com/NingZiXi/stm_log.git     # 备选：境外 / GitHub 直连
-    GIT_TAG        v2.3.0
+    GIT_TAG        v2.3.1
     SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log   # 关键：落到工程内的 Lib/stm_log/
 )
 FetchContent_MakeAvailable(stm_log)
@@ -229,7 +233,7 @@ FetchContent_MakeAvailable(stm_log)
 add_subdirectory(main)                      # 业务入口
 ```
 
-关键点是 `SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log`：FetchContent 会把源码 clone 到 `<root>/Lib/stm_log/` 而不是默认的 `<build>/_deps/stm_log-src/`。版本锁定 `v2.3.0`。如果 `Lib/stm_log/` 已存在，FetchContent 会跳过拉取直接复用。
+关键点是 `SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log`：FetchContent 会把源码 clone 到 `<root>/Lib/stm_log/` 而不是默认的 `<build>/_deps/stm_log-src/`。版本锁定 `v2.3.1`。如果 `Lib/stm_log/` 已存在，FetchContent 会跳过拉取直接复用。
 
 **离线 / 代理环境**：手动 `git clone https://gitee.com/nzxhg/stm_log <root>/Lib/stm_log` 后，FetchContent 自动跳过拉取走复用流程。
 
@@ -345,12 +349,13 @@ skill 生成的所有业务文件**严格按用户注释规范**，详见 [refer
 | F5 → `Couldn't find launch target` | CMakeTools 没识别 build target | 打开 CMakeTools 面板手动 Build 一次,或 `cmake --preset Debug` 跑过 |
 | F5 → 没 RTT log（RTT Viewer 看到,Console 空白） | `launch.json` `rttConfig` 配错 | `rttConfig.enabled: true` + `address: "auto"` + `decoders` schema 是 `{label, port, type:"console"}` 不是 `name/mode` |
 | F5 看不到 RTT log（PC 端） | 固件没调 `stm_log_init_output(rtt_output, ...)`，或顺序错（`SEGGER_RTT_Init` 在 `init_output` 之后） | 检查 `app_main()` 顺序：Init → init_output |
-| `undefined reference to stm_log_init_output` | RTT 模板要求 stm_log **v2.3.0+**，工程 FetchContent 还停在 v2.2.0 | 根 `CMakeLists.txt` 把 `GIT_TAG v2.2.0` 改成 `v2.3.0`，`rm -rf Lib/stm_log && cmake --preset Debug` 重拉 |
+| `undefined reference to stm_log_init_output` | RTT 模板要求 stm_log **v2.3.0+**，工程 FetchContent 还停在 v2.2.0 | 根 `CMakeLists.txt` 把 `GIT_TAG v2.2.0` 改成 `v2.3.1`，`rm -rf Lib/stm_log && cmake --preset Debug` 重拉 |
 | RTT log 在 JLinkRTTViewer 看得到，VSCode RTT Console 空白 | `.vscode/launch.json` `rttConfig` 配错 | `rttConfig.enabled: true` + `address: "auto"` + `decoders` schema 正确 |
 
 ## 详细参考
 
 - [references/CMake-integration.md](references/CMake-integration.md) — `add_subdirectory` 方法论、与 CubeMX 重生成的兼容性
+- [references/stm-log-config.md](references/stm-log-config.md) — `STM_LOG_HAL_HEADER`（HAL 家族头） / `STM_LOG_LINK_CUBEMX` 配置
 - [references/code-comment-style.md](references/code-comment-style.md) — 业务代码注释规范（文件头 Doxygen 模板 / 函数 `@brief` / 同行尾注释 / 红线）
 - [references/rtt-setup.md](references/rtt-setup.md) — SEGGER RTT 库就位步骤（GitHub clone / 离线 ZIP / SES 安装目录）+ 路径约定 + 验证命令
 - [assets/CMakeLists.txt](assets/CMakeLists.txt) — `main/CMakeLists.txt` 模板，通用版（UART 仅 link stm_log；RTT 额外条件 link `segger_rtt` target）

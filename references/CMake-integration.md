@@ -30,7 +30,7 @@ FetchContent_Declare(
     # 默认走 Gitee 镜像（国内访问快）；如需 GitHub 把下一行注释掉、放开下一行
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
     #GIT_REPOSITORY https://github.com/NingZiXi/stm_log.git     # 备选：境外 / GitHub 直连
-    GIT_TAG        v2.2.0
+    GIT_TAG        v2.3.1
     SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log   # 关键：clone 到工程内 Lib/stm_log/
 )
 FetchContent_MakeAvailable(stm_log)   # 联网环境自动 clone；目录已存在则跳过

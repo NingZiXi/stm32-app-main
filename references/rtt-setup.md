@@ -194,7 +194,7 @@ stm_log 库本身**不知道** RTT 存在,只提供 callback 注入接口。我�
 
 所以 stm_log 是 UART 还是 RTT 都一样,纯靠 callback 切换。RTT 升级不会影响 stm_log,反之亦然。
 
-> **stm_log 版本要求**:RTT 后端模板用 `stm_log_init_output`,需要 stm_log **v2.3.0+**。如果工程的 FetchContent 还停在 v2.2.0,会编译失败 `undefined reference to stm_log_init_output` —— 把根 `CMakeLists.txt` 的 `GIT_TAG v2.2.0` 改成 `v2.3.0` 即可。
+> **stm_log 版本要求**:RTT 后端模板用 `stm_log_init_output`,需要 stm_log **v2.3.0+**。如果工程的 FetchContent 还停在 v2.2.0,会编译失败 `undefined reference to stm_log_init_output` —— 把根 `CMakeLists.txt` 的 `GIT_TAG v2.2.0` 改成 `v2.3.1` 即可。
 
 ## Lib/segger_rtt 是否要 commit 进 git
 

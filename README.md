@@ -99,7 +99,7 @@ skill 会按这些说法自动加载：
 │   或 Core/Src/main.c               +app_main();  USER CODE 2（裸机）
 ├── cmake/stm32cubemx/CMakeLists.txt 不动 ✓
 ├── Lib/                             新增（FetchContent 把源码拉到这里）
-│   └── stm_log/                     clone 自 https://gitee.com/nzxhg/stm_log @ v2.2.0（GitHub 镜像：NingZiXi/stm_log）
+│   └── stm_log/                     clone 自 https://gitee.com/nzxhg/stm_log @ v2.3.1（GitHub 镜像：NingZiXi/stm_log）
 └── main/                            新增
     ├── CMakeLists.txt
     └── app_main.c                   业务入口
