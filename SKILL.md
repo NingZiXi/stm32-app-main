@@ -129,6 +129,127 @@ SEGGER RTT 走与 stm_log 同模式的 FetchContent 路径 —— 根 `CMakeList
 
 详细路径约定 + 验证命令 + `CMakeLists_rtt.txt` 标准模板见 [references/rtt-setup.md](references/rtt-setup.md)。
 
+### §1.7 Debug / Release 构建切换（关键！节省 ~13 KB FLASH）
+
+> **强烈建议每个用本 skill 改造的工程都加**。STM32G030 这类小 Flash 芯片（64 KB）调试链能占 14+ KB，量产前必须能整链路砍掉。
+
+#### 核心思想
+
+| 资源 | Debug | Release |
+|---|---|---|
+| **stm_log** 库 | 链入（~1.5 KB） | 链入但 GC 剔除（**净 0 KB**） |
+| **SEGGER_RTT** 库 | 链入（~3 KB） | 链入但 GC 剔除（**净 0 KB**） |
+| **newlib printf** | 链入（~1.5 KB） | GC 剔除（**净 0 KB**） |
+| **HAL 默认代码** | `-O0` 全部 | `-Os` + `NDEBUG` 砍 ~30% |
+
+**机制**：
+1. `target_link_libraries(... stm_log segger_rtt)` **始终链**（不条件）
+2. `STM_LOG_ENABLED=0` 让 `LOGx` 宏变 `do{}while(0)` 空操作
+3. 链接器 `--gc-sections` 把没引用的函数全删
+
+#### 4 处必改
+
+**① 根 `CMakeLists.txt`**（§3 之后追加）
+
+```cmake
+# 调试日志开关：默认按 build type 自动（Debug=ON / Release=OFF），可用 -DLOG_ENABLED=ON/OFF 覆盖
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_LOG_ENABLED_DEFAULT ON)
+else()
+    set(_LOG_ENABLED_DEFAULT OFF)
+endif()
+option(LOG_ENABLED "Enable RTT + stm_log debug logging" ${_LOG_ENABLED_DEFAULT})
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    LOG_ENABLED=$<BOOL:${LOG_ENABLED}>
+    STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>
+)
+target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>)
+
+target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)
+if(TARGET segger_rtt)
+    target_link_libraries(${CMAKE_PROJECT_NAME} segger_rtt)
+endif()
+```
+
+> ⚠ **关键**：`target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=...)` 让 LOGx 宏在**所有文件**统一行为。否则其他 .c 文件写 `LOGI(...)` 会触发 link 错误。
+
+**② `main/app_main.c` 永远 `#include "stm_log.h"`**
+
+```c
+#include "main.h"
+#include "stm_log.h"                  /* 永远 include，宏由 STM_LOG_ENABLED 控制 */
+#if LOG_ENABLED
+#include "SEGGER_RTT.h"               /* SEGGER_RTT_Init() 等用 */
+#endif
+
+#if LOG_ENABLED
+static const char *TAG = "main";
+static void rtt_output(const char *buf, uint16_t len) {
+    SEGGER_RTT_Write(0, buf, len);
+}
+#endif
+
+extern "C" void app_main(void) {
+    /* 业务初始化（不带日志） */
+#if LOG_ENABLED
+    SEGGER_RTT_Init();
+    stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
+#endif
+
+    LOGI(TAG, "Boot ...");             /* 任何位置写都行 */
+    for (;;) {
+        LOGI(TAG, "tick=%lu", HAL_GetTick());
+        HAL_Delay(10);
+    }
+}
+```
+
+> 💡 **不要**在 `#include "stm_log.h"` 外面包 `#if LOG_ENABLED`——永远 include，让 `STM_LOG_ENABLED=0` 把宏变 no-op。
+
+**③ 升级 `stm_log` 到 ≥ v2.3.1**
+
+v2.3.1 的 `stm_log_config.h` 把 `STM_LOG_ENABLED` 用 `#ifndef` 保护了：
+
+```c
+#ifndef STM_LOG_ENABLED
+#define STM_LOG_ENABLED 1
+#endif
+```
+
+这是关键——否则命令行 `-DSTM_LOG_ENABLED=0` 会触发 redefinition 警告。
+
+> 当前 tag v2.3.1 的源码已包含此保护。FetchContent 拉到本地后即可使用。
+
+**④ 触发方式**
+
+```bash
+# 默认按 build type
+cmake --build build/Debug      # LOG=ON，~26 KB
+cmake --build build/Release    # LOG=OFF，~13 KB
+
+# 手动覆盖
+cmake -S . -B build/Release -DLOG_ENABLED=ON   # 强制开日志看 Release 优化效果
+cmake -S . -B build/Debug  -DLOG_ENABLED=OFF  # Debug 但不打印，看 FLASH 极限
+```
+
+#### 验证
+
+```bash
+# 1. 检查宏生效
+cat build/Release/CMakeFiles/stm32_pm3009_modbus.dir/main/app_main.cpp.obj.d | grep STM_LOG_ENABLED
+
+# 2. 看 GC 效果
+arm-none-eabi-nm build/Release/stm32_pm3009_modbus.elf | grep -E "stm_log|SEGGER_RTT"
+# OFF 时应该空（函数被 GC），ON 时应该看到
+
+# 3. FLASH 对比
+arm-none-eabi-size build/Debug/stm32_pm3009_modbus.elf      # ~27 KB
+arm-none-eabi-size build/Release/stm32_pm3009_modbus.elf    # ~13 KB
+```
+
+详细原理 + 失败分流见 [references/release-build.md](references/release-build.md)。
+
 ### §2 写入 main/
 
 按 §1.5 选的后端走 A 或 B。
@@ -245,6 +366,10 @@ add_subdirectory(main)                      # 业务入口
 
 ### §4 接入口
 
+> ⚠ **本节修改的是 CubeMX 官方 USER CODE 区域**（`/* USER CODE BEGIN xxx */` 和 `/* USER CODE END xxx */` 之间）。CubeMX 重生成时**保留** USER CODE 内容。所以这里加 `app_main();` 是合法且持久。
+> 
+> 详见 §5 的"USER CODE 边界"说明。
+
 #### A. FreeRTOS
 
 `Core/Src/freertos.c` → `StartDefaultTask`：
@@ -270,7 +395,7 @@ int main(void) {
   MX_USART1_UART_Init();
 
   /* USER CODE BEGIN 2 */
-  app_main();          // ← 这里
+  app_main();          // ← 这里，USER CODE 2 区域内
   /* USER CODE END 2 */
 
   while (1) { /* 空，留给中断 / 后台 */ }
@@ -281,11 +406,47 @@ int main(void) {
 
 两种工程下 `app_main()` 都**永不返回**。
 
+#### §4 自动化要点
+
+skill 执行 §4 时**自动**改 `Core/Src/freertos.c` 或 `Core/Src/main.c`，但只在 USER CODE 区域里加 `app_main();` 调用。具体逻辑：
+
+1. **检测** USER CODE BEGIN/END 标记是否存在
+2. **找到**对应的用户代码块（FreeRTOS 是 5，裸机是 2）
+3. **插入** `app_main();` 到该块**末尾**（不要覆盖已有代码）
+4. **验证** 不在 USER CODE 之外的代码里加任何东西
+
+检测方法示例：
+
+```bash
+# 裸机
+grep -A 3 "USER CODE BEGIN 2" <root>/Core/Src/main.c
+
+# FreeRTOS
+grep -A 3 "USER CODE BEGIN 5" <root>/Core/Src/freertos.c
+```
+
 ### §5 业务文件搬迁（用户手动）
 
 **本 skill 不改 `cmake/` 也不改 `Core/`**。如果用户老工程里业务文件散落在 `Core/Src/` 下：
 
 > 请手动 `git mv` 把它们移到 `main/`，然后在 `main/CMakeLists.txt` 的 `target_sources` 里加上。
+
+#### 重要：`Core/Src/` 的 "不改" 边界
+
+| 可以改 | 不能改 |
+|---|---|
+| `/* USER CODE BEGIN xxx */` 和 `/* USER CODE END xxx */` **之间**的所有内容 | USER CODE 之外的代码（包括函数体、初始化顺序、外设配置） |
+| `USER CODE` 注释自己写也行 | 加新文件到 `Core/Src/`（CubeMX 重生成会清掉） |
+| 调整 `USER CODE` 内已有调用顺序 | 改函数签名（CubeMX 生成的函数） |
+
+**原因**：CubeMX 重生成时只覆盖 `USER CODE BEGIN/END` 之外的内容。USER CODE 区是 CubeMX 官方留的"用户可编辑区"，每次 Generate 都被保留。
+
+所以：
+- §4 在 `main.c` 的 `USER CODE BEGIN 2 / END 2` **内**加 `app_main();` ← ✅ 合法
+- §4 在 `freertos.c` 的 `USER CODE BEGIN 5 / END 5` **内**加 `app_main();` ← ✅ 合法
+- 不要在 `main.c` 的 `USER CODE` 之外加任何代码 ← ❌ 会丢失
+
+**自动检测**：skill 改造工程时，如果发现 `main.c` 的 USER CODE 2 已存在其他用户代码，**附加**到现有代码之后，不要覆盖。
 
 ### §6 验证
 
@@ -351,6 +512,10 @@ skill 生成的所有业务文件**严格按用户注释规范**，详见 [refer
 | F5 看不到 RTT log（PC 端） | 固件没调 `stm_log_init_output(rtt_output, ...)`，或顺序错（`SEGGER_RTT_Init` 在 `init_output` 之后） | 检查 `app_main()` 顺序：Init → init_output |
 | `undefined reference to stm_log_init_output` | RTT 模板要求 stm_log **v2.3.0+**，工程 FetchContent 还停在 v2.2.0 | 根 `CMakeLists.txt` 把 `GIT_TAG v2.2.0` 改成 `v2.3.1`，`rm -rf Lib/stm_log && cmake --preset Debug` 重拉 |
 | RTT log 在 JLinkRTTViewer 看得到，VSCode RTT Console 空白 | `.vscode/launch.json` `rttConfig` 配错 | `rttConfig.enabled: true` + `address: "auto"` + `decoders` schema 正确 |
+| `'STM_LOG_ENABLED' redefined` 警告（Release build） | `stm_log_config.h` 缺 `#ifndef` 保护；只发生在 stm_log **< v2.3.1** | 升级 `GIT_TAG` 到 `v2.3.1`，或手动在 `Lib/stm_log/stm_log_config.h` 加 `#ifndef STM_LOG_ENABLED` 守护 |
+| Release build 不省 FLASH（仍 ~27 KB） | LOG_ENABLED 没生效；常见原因：`stm_log` 库没同步 `STM_LOG_ENABLED` 编译定义 | 确认根 CMakeLists 有 `target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>)`（见 §1.7 第①步） |
+| Release build `undefined reference to stm_log_init_output` | 同上，LOGx 变 no-op 失败 | 同上 |
+| 改完 §1.7 后 LOG_ENABLED=ON 仍 ~13 KB | 把 `stm_log` / `SEGGER_RTT` 改成条件 link 了，链 GC 时函数不在 | 见 §1.7 第①步，**必须始终链**让 GC 处理 |
 
 ## 详细参考
 
@@ -358,6 +523,7 @@ skill 生成的所有业务文件**严格按用户注释规范**，详见 [refer
 - [references/stm-log-config.md](references/stm-log-config.md) — `STM_LOG_HAL_HEADER`（HAL 家族头） / `STM_LOG_LINK_CUBEMX` 配置
 - [references/code-comment-style.md](references/code-comment-style.md) — 业务代码注释规范（文件头 Doxygen 模板 / 函数 `@brief` / 同行尾注释 / 红线）
 - [references/rtt-setup.md](references/rtt-setup.md) — SEGGER RTT 库就位步骤（GitHub clone / 离线 ZIP / SES 安装目录）+ 路径约定 + 验证命令
+- [references/release-build.md](references/release-build.md) — Debug/Release 构建切换：LOG_ENABLED 编译期宏、stm_log/SEGGER_RTT 整链路裁剪（~13 KB FLASH 节省）
 - [assets/CMakeLists.txt](assets/CMakeLists.txt) — `main/CMakeLists.txt` 模板，通用版（UART 仅 link stm_log；RTT 额外条件 link `segger_rtt` target）
 - [assets/app_main.c](assets/app_main.c) — FreeRTOS UART 版入口
 - [assets/app_main_bare.c](assets/app_main_bare.c) — 裸机 UART 版入口
