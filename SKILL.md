@@ -51,7 +51,9 @@ description: 把 STM32CubeMX + CMake 工程改造成「main/ 子模块」结构�
         └── ...
 ```
 
-## 工作流（8 步）
+## 工作流（8 步 + 条件 §6.5）
+
+> **§6.5（.vscode 配置）只在日志后端选 SEGGER RTT 时必做**；UART 后端跳过。
 
 ### §0 探测
 
@@ -455,9 +457,17 @@ cmake -S <root> -B <root>/build -DCMAKE_BUILD_TYPE=Debug
 cmake --build <root>/build
 ```
 
-### §6.5 VSCode + Cortex-Debug 调试配置(可选)
+### §6.5 VSCode + Cortex-Debug 调试配置 **（仅 RTT 分支必做）**
 
-> **适用**：你用 **VSCode + Cortex-Debug 扩展** + **J-Link** 在本地调试。其他 IDE(Ozone / CubeIDE / STM32CubeIDE for VSCode / IAR / Keil)跳过本步。
+> **🚨 日志后端选了 SEGGER RTT 时，这是必做步骤，不要漏** —— F5 调试直接走 RTTConsole 出 log。
+>
+> **何时跳过**：
+> - 选了 **UART 后端**（log 走 `stm_log_init(&huart1, ...)`，用串口助手看，不依赖 launch.json）
+> - 或者用户明确说"我用 Ozone / CubeIDE / IAR / Keil 调试"
+>
+> 其他情况（VSCode + Cortex-Debug + J-Link + RTT 后端）都按本节落地。
+
+**适用**：你用 **VSCode + Cortex-Debug 扩展** + **J-Link** + **SEGGER RTT** 后端调试。其他情况跳过本步。
 
 | 源 | 目标 |
 |----|------|
