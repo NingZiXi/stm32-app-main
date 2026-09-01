@@ -153,13 +153,13 @@ SEGGER RTT 走与 stm_log 同模式的 FetchContent 路径 —— 根 `CMakeList
 
 ```cmake
 # 调试日志开关 (ON / OFF),可在命令行用 -DLOG_ENABLED=OFF 覆盖
-set(LOG_ENABLED ON CACHE STRING "Enable RTT + stm_log debug logging (ON/OFF)")
+set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable RTT + stm_log debug logging (ON/OFF)")
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    LOG_ENABLED=$<BOOL:${LOG_ENABLED}>
-    STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>
+    CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
+    STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
 )
-target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>)
+target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>)
 
 target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)
 if(TARGET segger_rtt)
@@ -167,7 +167,7 @@ if(TARGET segger_rtt)
 endif()
 ```
 
-> **变化说明**:v2 简化为手动 ON/OFF，不再按 build type 自动切换。LOG_ENABLED 是 CMake 缓存的字符串，默认 ON，修改后重跑 configure-debug 生效。
+> **变化说明**:v2 简化为手动 ON/OFF，不再按 build type 自动切换。CONFIG_LOG_ENABLED 是 CMake 缓存的字符串，默认 ON，修改后重跑 configure-debug 生效。
 
 > ⚠ **关键**：`target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=...)` 让 LOGx 宏在**所有文件**统一行为。否则其他 .c 文件写 `LOGI(...)` 会触发 link 错误。
 
@@ -176,11 +176,11 @@ endif()
 ```c
 #include "main.h"
 #include "stm_log.h"                  /* 永远 include，宏由 STM_LOG_ENABLED 控制 */
-#if LOG_ENABLED
+#if CONFIG_LOG_ENABLED
 #include "SEGGER_RTT.h"               /* SEGGER_RTT_Init() 等用 */
 #endif
 
-#if LOG_ENABLED
+#if CONFIG_LOG_ENABLED
 static const char *TAG = "main";
 static void rtt_output(const char *buf, uint16_t len) {
     SEGGER_RTT_Write(0, buf, len);
@@ -189,7 +189,7 @@ static void rtt_output(const char *buf, uint16_t len) {
 
 extern "C" void app_main(void) {
     /* 业务初始化（不带日志） */
-#if LOG_ENABLED
+#if CONFIG_LOG_ENABLED
     SEGGER_RTT_Init();
     stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
 #endif
@@ -202,7 +202,7 @@ extern "C" void app_main(void) {
 }
 ```
 
-> 💡 **不要**在 `#include "stm_log.h"` 外面包 `#if LOG_ENABLED`——永远 include，让 `STM_LOG_ENABLED=0` 把宏变 no-op。
+> 💡 **不要**在 `#include "stm_log.h"` 外面包 `#if CONFIG_LOG_ENABLED`——永远 include，让 `STM_LOG_ENABLED=0` 把宏变 no-op。
 
 **③ 升级 `stm_log` 到 ≥ v2.3.1**
 
@@ -221,7 +221,7 @@ v2.3.1 的 `stm_log_config.h` 把 `STM_LOG_ENABLED` 用 `#ifndef` 保护了：
 **④ 触发方式**
 
 ```bash
-# 默认 ON (修改‧‧① 那行 set(LOG_ENABLED ON/OFF) 切换)
+# 默认 ON (修改‧‧① 那行 set(CONFIG_LOG_ENABLED ON/OFF) 切换)
 cmake -S . -B build/Debug                       # LOG=ON，~26 KB
 
 # 命令行一次性覆盖 (不持久)
@@ -245,6 +245,50 @@ arm-none-eabi-size build/Release/stm32_pm3009_modbus.elf    # ~13 KB
 ```
 
 详细原理 + 失败分流见 [references/release-build.md](references/release-build.md)。
+
+
+### §1.8 App 版本号（CONFIG_APP_VERSION 宏）
+
+> 工程里硬编码 `"1.0.0"` 容易忘改,推荐 CMake 集中管理 + `target_compile_definitions` 注入 C 宏。
+
+**根 `CMakeLists.txt`**（在 §3 之后追加）
+
+```cmake
+# App 固件版本（semver），命令行可用 -DAPP_VERSION=2.5.3 覆盖
+set(APP_VERSION "1.0.0" CACHE STRING "App firmware semver (e.g. 1.2.3)")
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    CONFIG_APP_VERSION="${APP_VERSION}"
+)
+```
+
+**业务代码里直接用**(`assets/app_main.c` 模板已示范):
+
+```c
+#include "stm_log.h"
+
+void app_main(void) {
+    stm_log_init(&huart1, STM_LOG_LVL_INFO);
+    LOGI(TAG, "Boot (v%s). Heap=%u", CONFIG_APP_VERSION, (unsigned)xPortGetFreeHeapSize());
+    ...
+}
+```
+
+**特性**：
+
+- `set(... CACHE STRING ...)` 让 `-DAPP_VERSION=2.5.3` 一次性覆盖,后续 configure 不写就持久化在 CMakeCache.txt
+- `CONFIG_APP_VERSION` 是字符串字面量（`"1.0.0"`），直接 `%s` 打印,无需 `""`
+- 默认值集中在一处,OTA / release 流程读这个变量即可知道当前版本
+
+**改版本方法**：
+
+```bash
+# 命令行一次性（不持久化,适合 CI）
+cmake -S . -B build/Debug -DAPP_VERSION=2.5.3
+
+# 或直接改根 CMakeLists.txt 的 set(APP_VERSION ...) 默认值
+```
+
 
 ### §2 写入 main/
 
@@ -509,9 +553,9 @@ skill 生成的所有业务文件**严格按用户注释规范**，详见 [refer
 | `undefined reference to stm_log_init_output` | RTT 模板要求 stm_log **v2.3.0+**，工程 FetchContent 还停在 v2.2.0 | 根 `CMakeLists.txt` 把 `GIT_TAG v2.2.0` 改成 `v2.3.1`，`rm -rf Lib/stm_log && cmake --preset Debug` 重拉 |
 | RTT log 在 JLinkRTTViewer 看得到，VSCode RTT Console 空白 | `.vscode/launch.json` `rttConfig` 配错 | `rttConfig.enabled: true` + `address: "auto"` + `decoders` schema 正确 |
 | `'STM_LOG_ENABLED' redefined` 警告（Release build） | `stm_log_config.h` 缺 `#ifndef` 保护；只发生在 stm_log **< v2.3.1** | 升级 `GIT_TAG` 到 `v2.3.1`，或手动在 `Lib/stm_log/stm_log_config.h` 加 `#ifndef STM_LOG_ENABLED` 守护 |
-| Release build 不省 FLASH（仍 ~27 KB） | LOG_ENABLED 没生效；常见原因：`stm_log` 库没同步 `STM_LOG_ENABLED` 编译定义 | 确认根 CMakeLists 有 `target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>)`（见 §1.7 第①步） |
+| Release build 不省 FLASH（仍 ~27 KB） | CONFIG_LOG_ENABLED 没生效；常见原因：`stm_log` 库没同步 `STM_LOG_ENABLED` 编译定义 | 确认根 CMakeLists 有 `target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>)`（见 §1.7 第①步） |
 | Release build `undefined reference to stm_log_init_output` | 同上，LOGx 变 no-op 失败 | 同上 |
-| 改完 §1.7 后 LOG_ENABLED=ON 仍 ~13 KB | 把 `stm_log` / `SEGGER_RTT` 改成条件 link 了，链 GC 时函数不在 | 见 §1.7 第①步，**必须始终链**让 GC 处理 |
+| 改完 §1.7 后 CONFIG_LOG_ENABLED=ON 仍 ~13 KB | 把 `stm_log` / `SEGGER_RTT` 改成条件 link 了，链 GC 时函数不在 | 见 §1.7 第①步，**必须始终链**让 GC 处理 |
 
 ## 详细参考
 
@@ -519,7 +563,7 @@ skill 生成的所有业务文件**严格按用户注释规范**，详见 [refer
 - [references/stm-log-config.md](references/stm-log-config.md) — `STM_LOG_HAL_HEADER`（HAL 家族头） / `STM_LOG_LINK_CUBEMX` 配置
 - [references/code-comment-style.md](references/code-comment-style.md) — 业务代码注释规范（文件头 Doxygen 模板 / 函数 `@brief` / 同行尾注释 / 红线）
 - [references/rtt-setup.md](references/rtt-setup.md) — SEGGER RTT 库就位步骤（GitHub clone / 离线 ZIP / SES 安装目录）+ 路径约定 + 验证命令
-- [references/release-build.md](references/release-build.md) — Debug/Release 构建切换：LOG_ENABLED 编译期宏、stm_log/SEGGER_RTT 整链路裁剪（~13 KB FLASH 节省）
+- [references/release-build.md](references/release-build.md) — Debug/Release 构建切换：CONFIG_LOG_ENABLED 编译期宏、stm_log/SEGGER_RTT 整链路裁剪（~13 KB FLASH 节省）
 - [assets/CMakeLists.txt](assets/CMakeLists.txt) — `main/CMakeLists.txt` 模板，通用版（UART 仅 link stm_log；RTT 额外条件 link `segger_rtt` target）
 - [assets/app_main.c](assets/app_main.c) — FreeRTOS UART 版入口
 - [assets/app_main_bare.c](assets/app_main_bare.c) — 裸机 UART 版入口

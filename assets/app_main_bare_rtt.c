@@ -34,7 +34,7 @@ void app_main(void) {
     SEGGER_RTT_Init();                                              // 必须在 stm_log_init_output 之前
     stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);              // v2.3.0+：一步设 callback + level，跳过 UART 绑定
 
-    LOGI(TAG, "Boot (bare metal → RTT)");
+    LOGI(TAG, "Boot (bare metal → RTT, v%s)", CONFIG_APP_VERSION);
 
     for (;;) {
         LOGI(TAG, "tick=%lu", HAL_GetTick());                       // 1 Hz 心跳

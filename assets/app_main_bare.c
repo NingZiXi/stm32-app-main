@@ -25,9 +25,10 @@ static const char *TAG = "main";
  */
 void app_main(void) {
     stm_log_init(&huart1, STM_LOG_LVL_INFO);                         // 绑定调试 UART + 全局 level
-    LOGI(TAG, "Boot (bare metal)");
+    LOGI(TAG, "Boot (bare metal, v%s)", CONFIG_APP_VERSION);
 
     for (;;) {
         HAL_Delay(1000);                                              // 1 Hz 业务心跳；按需替换
     }
 }
+

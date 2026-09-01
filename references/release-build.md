@@ -36,7 +36,7 @@
 
 ## 三步接入
 
-### ① 根 `CMakeLists.txt` 加 LOG_ENABLED 开关
+### ① 根 `CMakeLists.txt` 加 CONFIG_LOG_ENABLED 开关
 
 ```cmake
 # 调试日志开关：默认按 build type 自动（Debug=ON / Release=OFF），可用 -DLOG_ENABLED=ON/OFF 覆盖
@@ -45,14 +45,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
     set(_LOG_ENABLED_DEFAULT OFF)
 endif()
-option(LOG_ENABLED "Enable RTT + stm_log debug logging" ${_LOG_ENABLED_DEFAULT})
+option(CONFIG_LOG_ENABLED "Enable RTT + stm_log debug logging" ${_LOG_ENABLED_DEFAULT})
 
-# 联动两个宏：LOG_ENABLED（业务开关）+ STM_LOG_ENABLED（stm_log 库开关）
+# 联动两个宏：CONFIG_LOG_ENABLED（业务开关）+ STM_LOG_ENABLED（stm_log 库开关）
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    LOG_ENABLED=$<BOOL:${LOG_ENABLED}>
-    STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>
+    CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
+    STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
 )
-target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${LOG_ENABLED}>)
+target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>)
 
 # 始终链（让链接器 GC 自动剔除不用的）
 target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)
@@ -67,11 +67,11 @@ endif()
 #include "main.h"
 #include "stm_log.h"                  /* 永远 include，宏由 STM_LOG_ENABLED 控制 */
 
-#if LOG_ENABLED
+#if CONFIG_LOG_ENABLED
 #include "SEGGER_RTT.h"               /* SEGGER_RTT_Init() 等用 */
 #endif
 
-#if LOG_ENABLED
+#if CONFIG_LOG_ENABLED
 static const char *TAG = "main";
 
 static void rtt_output(const char *buf, uint16_t len) {
@@ -82,7 +82,7 @@ static void rtt_output(const char *buf, uint16_t len) {
 void app_main(void) {
     /* 业务初始化（不带日志） */
     
-#if LOG_ENABLED
+#if CONFIG_LOG_ENABLED
     SEGGER_RTT_Init();
     stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
 #endif
@@ -96,7 +96,7 @@ void app_main(void) {
 }
 ```
 
-**关键**：不要在 LOG_ENABLED=OFF 时手动 `#include "stm_log.h"` 外面加 `#if`——让它**永远 include**，让 `STM_LOG_ENABLED=0` 把宏变 no-op。
+**关键**：不要在 CONFIG_LOG_ENABLED=OFF 时手动 `#include "stm_log.h"` 外面加 `#if`——让它**永远 include**，让 `STM_LOG_ENABLED=0` 把宏变 no-op。
 
 ### ③ 不需要手动改 `stm_log_config.h`
 
@@ -150,7 +150,7 @@ cat build/Release/stm32_pm3009_modbus.map | grep -E "stm_log|SEGGER_RTT"
 
 OFF 时应该看到 `stm_log_*` / `SEGGER_RTT_*` 函数**不在 .map**（被 GC）。
 
-### 2. 验证 LOG_ENABLED 切换有效
+### 2. 验证 CONFIG_LOG_ENABLED 切换有效
 
 ```bash
 # Debug build（默认 ON）
@@ -190,11 +190,11 @@ arm-none-eabi-nm build/Debug/stm32_pm3009_modbus.elf | grep stm_log
 
 ## 关键不变式
 
-不管 `LOG_ENABLED` 是 ON 还是 OFF：
+不管 `CONFIG_LOG_ENABLED` 是 ON 还是 OFF：
 
 1. **`stm_log` 和 `SEGGER_RTT` 始终链入工程**（让 GC 处理）
 2. **`stm_log.h` 始终 include**（让宏总是有定义）
 3. **LOGx 宏永远可写**（OFF 时变空操作，编译不报错）
-4. **`SEGGER_RTT_Init()` 等仍需 `#if LOG_ENABLED`**（OFF 时根本不调这些函数，链接器 GC 干净）
+4. **`SEGGER_RTT_Init()` 等仍需 `#if CONFIG_LOG_ENABLED`**（OFF 时根本不调这些函数，链接器 GC 干净）
 
 这条不变式让代码**不需要为 Release 改任何东西**——只要 CMake 切一下，FLASH 自动下来。
