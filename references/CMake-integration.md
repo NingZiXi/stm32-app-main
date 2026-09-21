@@ -1,172 +1,84 @@
-# CMake `add_subdirectory(main)` + FetchContent(stm_log → Lib/stm_log) 集成方法
+# CMake `main/` + stm_log v3 集成
 
-## 本 skill 改 / 不改的 CMake 文件
+## 稳定边界
 
-| 文件 | 是否改 | 原因 |
-|------|--------|------|
-| 根 `CMakeLists.txt` | ✅ 加 `FetchContent_Declare(stm_log, SOURCE_DIR=Lib/stm_log)` + `FetchContent_MakeAvailable` + `add_subdirectory(main)` | CubeMX 不重写它 |
-| `cmake/stm32cubemx/CMakeLists.txt` | ❌ | CubeMX 整段重写 |
-| `cmake/` 下其他文件 | ❌ | 同上 |
-| `Core/` 下任何 `.c` / `.h` | ❌ | 同上 |
+| 文件 | 处理 |
+|---|---|
+| 根 `CMakeLists.txt` | 添加 `stm_log` FetchContent、配置日志选项、`add_subdirectory(main)` |
+| `main/CMakeLists.txt` | 添加 `app_main.c`，只链接 `stm_log` |
+| `cmake/`、`Core/` | 不改 CubeMX 生成区域；入口调用只放在 USER CODE 区域 |
 
-CubeMX 重生成覆盖的文件：
-- `Core/Src/{main,freertos,stm32f4xx_it,stm32f4xx_hal_msp,stm32f4xx_hal_timebase_tim}.c`
-- `Core/Inc/*.h`、`Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_conf.h`
-- `cmake/stm32cubemx/CMakeLists.txt`、`*.ioc`
-
-CubeMX 不碰：`CMakeLists.txt` 根文件、所有用户自建目录（`main/` / `Lib/stm_log/` 等）。
-
-→ 根 `CMakeLists.txt` 是业务层唯一的稳定立足点。
-
-## `add_subdirectory(main)` 的语义
+## 根 CMake
 
 ```cmake
-# 根 CMakeLists.txt
-add_subdirectory(cmake/stm32cubemx)   # CubeMX 生成的
+add_subdirectory(cmake/stm32cubemx)
 
 include(FetchContent)
+set(STM_LOG_WITH_RTT ON) # UART 后端改为 OFF
 FetchContent_Declare(
     stm_log
-    # 默认走 Gitee 镜像（国内访问快）；如需 GitHub 把下一行注释掉、放开下一行
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    #GIT_REPOSITORY https://github.com/NingZiXi/stm_log.git     # 备选：境外 / GitHub 直连
-    GIT_TAG        v2.3.1
-    SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log   # 关键：clone 到工程内 Lib/stm_log/
+    GIT_TAG        v3.0.0
+    SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
 )
-FetchContent_MakeAvailable(stm_log)   # 联网环境自动 clone；目录已存在则跳过
+FetchContent_MakeAvailable(stm_log)
 
-add_subdirectory(main)                # ← 本 skill 加的
+set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable stm_log output (ON/OFF)")
+set(APP_VERSION "1.0.0" CACHE STRING "Application firmware version")
+target_compile_definitions(stm_log PUBLIC
+    STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
+)
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    CONFIG_APP_VERSION="${APP_VERSION}"
+    CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
+)
+add_subdirectory(main)
 ```
 
-等价于：
+v3 核心不包含 HAL，也不需要 `STM_LOG_HAL_HEADER` 或 `STM_LOG_LINK_CUBEMX`。RTT 由 `STM_LOG_WITH_RTT=ON` 触发并通过 `stm_log` 的 PUBLIC 依赖传递；根工程不再单独声明 `segger_rtt`。
 
-1. 进入 `main/`
-2. 执行 `main/CMakeLists.txt`
-3. 里面的 `target_sources` / `target_include_directories` / `target_link_libraries` 作用到顶层 `${CMAKE_PROJECT_NAME}`
-4. `target_link_libraries(... stm_log)` 让 `stm_log` target（FetchContent 下载到 `Lib/stm_log/` 的源码）被链入
+## main/CMakeLists.txt
 
-它**不**创建独立目标，只切换作用域。
+```cmake
+if(TARGET ${CMAKE_PROJECT_NAME})
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app_main.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)
+endif()
+```
 
-FetchContent 详细机制：通过 `SOURCE_DIR` 把源码直接 clone 到 `<root>/Lib/stm_log/`（不是默认的 `<build>/_deps/stm_log-src/`），源码落在工程内便于 IDE 索引 / 版本管理。目录已存在则跳过拉取复用现有内容；离线 / 代理环境下手动 `git clone ... <root>/Lib/stm_log` 后同样走复用流程。
+## 应用初始化
 
-## 入口挂载点
-
-### FreeRTOS
-
-`Core/Src/freertos.c` → `StartDefaultTask`：
+UART 和 RTT 都是应用回调：
 
 ```c
-void StartDefaultTask(void *argument) {
-  /* USER CODE BEGIN 5 */
-  app_main();
-  /* USER CODE END 5 */
+static void output(const char *data, uint16_t len)
+{
+    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
 }
+
+stm_log_set_tick(HAL_GetTick);
+stm_log_init_output(output, STM_LOG_LVL_INFO);
 ```
 
-模板 `assets/app_main.c`：`osDelay` + `xPortGetFreeHeapSize` + `stm_log_init(&huart1, ...)`。
+RTT 回调改用 `SEGGER_RTT_Write`，并在此之前调用 `SEGGER_RTT_Init()`。`stm_log_init(&huart1, ...)` 已移除。
 
-### 裸机
+## FetchContent 路径
 
-`Core/Src/main.c` → `USER CODE 2`（`MX_*_Init()` 全部完成后、`while (1)` 之前）：
-
-```c
-int main(void) {
-  HAL_Init();
-  SystemClock_Config();
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_USART1_UART_Init();
-
-  /* USER CODE BEGIN 2 */
-  app_main();          // ← 应用入口，跟其他初始化对齐
-  /* USER CODE END 2 */
-
-  while (1) { /* 兜底 */ }
-}
-```
-
-`app_main()` 内部 `for(;;)` 死循环，永远不会返回到 `while`。`while (1)` 保留作为兜底（万一以后 `app_main` 改成可返回版本时仍能工作）。
-
-模板 `assets/app_main_bare.c`：`HAL_Delay`，不依赖 FreeRTOS。
-
-### 自动判定
-
-多源多数：
-
-| 信号 | FreeRTOS |
-|------|---------|
-| `Core/Src/freertos.c` 存在 | +1 |
-| `Middlewares/Third_Party/FreeRTOS` 存在 | +1 |
-| `Core/Src/main.c` 含 `MX_FREERTOS_Init` 或 `osKernelStart` | +1 |
-
-≥2 → FreeRTOS 模板；否则裸机模板。
-
-## 验证
+`SOURCE_DIR` 将源码放在 `<root>/Lib/stm_log/`，编译产物仍在 `build/`。目录存在不代表跳过 Git 更新。离线时准备好 v3.0.0 源码，再显式设置本地覆盖：
 
 ```bash
-cmake -S <root> -B <root>/build -DCMAKE_BUILD_TYPE=Debug
+cmake --preset Debug -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"
+```
+
+## 验证与错误
+
+```bash
+cmake -S <root> -B <root>/build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build <root>/build
 ```
 
-正常输出 `Configuring done` + `Build files have been written to: ...`。
-
-错误对照：
-- `main/ not loaded by top-level CMake. Skipping app_main build.` → 根 `CMakeLists.txt` 没加 `add_subdirectory(main)`
-- `Cannot find source file: stm_log.c` → `Lib/stm_log/` 没克隆或路径错（检查 `SOURCE_DIR` 是否指到工程内 `Lib/stm_log/`）
-- `Failed to clone ... gitee.com/nzxhg/stm_log.git` → Gitee / 代理异常；手动 `git clone https://gitee.com/nzxhg/stm_log <root>/Lib/stm_log`，FetchContent 会跳过拉取复用；或切回 GitHub：把 `GIT_REPOSITORY` 改 `https://github.com/NingZiXi/stm_log.git`
-- `undefined reference to app_main` → 根 CMakeLists.txt 没加 `add_subdirectory(main)`
-- `undefined reference to stm_log_init` → `main/CMakeLists.txt` 没 link `stm_log`（模板已加，手改时容易漏）
-- `undefined reference to osDelay` / `xPortGetFreeHeapSize` → 错把 FreeRTOS 模板塞到裸机工程
-- `undefined reference to HAL_Delay` → 错把裸机模板塞到 FreeRTOS 工程
-
-## 常见误区
-
-### 业务文件放 `Core/Src/` 里
-
-可以但不建议：
-
-- CubeMX 每次重生成按字母序重排 `MX_Application_Src`，diff 心烦
-- CubeMX 会提示"检测到未管理的源文件"
-
-正确做法：业务文件全部在 `main/` 下。
-
-### 在 `cmake/stm32cubemx/CMakeLists.txt` 末尾追加业务
-
-可以追加（CubeMX 不覆盖文件末尾某些位置），但本 skill 不这么做：
-
-- 路径基准变成 `cmake/stm32cubemx/`，业务文件必须放那里
-- 调试时要进 cmake/ 子目录看配置，定位绕
-- `main/` 复用给其他工程时带着 cmake 路径，麻烦
-
-### `main/CMakeLists.txt` 是 CubeMX 的一部分
-
-不是。`main/` 完全是你自己创建的目录，CubeMX 不知道它的存在。
-
-## stm_log 库升级
-
-源码已经落在工程内 `Lib/stm_log/`，升级有两条路：
-
-```bash
-# 方式 A：手动 git pull（SOURCE_DIR 已存在，FetchContent 不会重新覆盖）
-cd Lib/stm_log && git pull
-```
-
-```bash
-# 方式 B：让 FetchContent 重新拉（先清空 Lib/stm_log/，再 cmake configure）
-rm -rf Lib/stm_log/* Lib/stm_log/.git
-cmake -S . -B build   # 触发 FetchContent 重新 clone 到 Lib/stm_log/
-```
-
-升级到新版本直接重编译即可（库的 ABI 向后兼容）。`SOURCE_DIR` 已存在的库不会被 FetchContent 覆盖，所以手动 `git pull` 是最稳的方式。
-
-## FreeRTOS / CMSIS-OS 兼容
-
-FreeRTOS 模板：
-- `#include "cmsis_os.h"` 由 CubeMX 自动加入 `Core/Inc/`
-- `main/CMakeLists.txt` 的 `target_include_directories` 把 `main/` 加入 include path
-- 可正常调用所有 CMSIS-OS API
-
-裸机模板：
-- 只依赖 `main.h`（HAL）和自身
-- 不 include `cmsis_os.h`
-- 用 `HAL_Delay` 替代 `osDelay`
+- `undefined reference to app_main`：缺少 `add_subdirectory(main)`。
+- `undefined reference to stm_log_init`：使用了 v2 接口，改用输出回调和 `stm_log_init_output`。
+- `undefined reference to SEGGER_RTT_Init`：启用 `STM_LOG_WITH_RTT`，确认 RTT 源可用。
+- `HAL` 头文件错误：删除旧的 `STM_LOG_HAL_HEADER` 配置，HAL 只由应用包含。

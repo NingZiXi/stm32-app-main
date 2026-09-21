@@ -11,13 +11,21 @@
 
 #include "main.h"
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
 
 #include "stm_log.h"
 
-/* main.c 里以文件作用域定义，不在 main.h 里 extern — app_main 需要直接引用 */
+#if STM_LOG_ENABLED
+// 按工程实际调试串口替换。
 extern UART_HandleTypeDef huart1;
 
-static const char *TAG = "main";
+/** @brief 同步发送日志，不保存输出缓冲指针。 */
+static void uart_output(const char *data, uint16_t len) {
+    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
+}
+#endif
+
+#define TAG "main"
 
 /**
  * @brief 应用入口；FreeRTOS 默认任务里调用，永不返回
@@ -25,7 +33,10 @@ static const char *TAG = "main";
  * @note    挂载点：Core/Src/freertos.c 的 StartDefaultTask USER CODE 5
  */
 void app_main(void) {
-    stm_log_init(&huart1, STM_LOG_LVL_INFO);                         // 绑定调试 UART + 全局 level
+#if STM_LOG_ENABLED
+    stm_log_set_tick(HAL_GetTick);
+    stm_log_init_output(uart_output, STM_LOG_LVL_INFO);
+#endif
     LOGI(TAG, "Boot (v%s). Heap=%u", CONFIG_APP_VERSION, (unsigned)xPortGetFreeHeapSize());
     for (;;) {
         osDelay(1000);                                                // 1 Hz 业务心跳；按需替换

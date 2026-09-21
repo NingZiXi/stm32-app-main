@@ -1,94 +1,79 @@
-# stm_log 配置参考
+# stm_log v3.0.0 配置参考
 
-`stm_log` 是 skill 通过 FetchContent 拉取的依赖库，工程内可独立配置。
-本节列出 skill 默认值与覆盖方式，遇到非 STM32F4 工程必须读这里。
+`stm_log` v3.0.0 是平台无关的 C 日志核心，不包含 HAL/CMSIS 头文件，也不初始化 UART。UART、RTT、SWO 和 USB CDC 都由应用提供输出回调。
 
-## STM_LOG_HAL_HEADER（v2.3.1+ 必须配置）
-
-`stm_log` 依赖 STM32 HAL 提供 `UART_HandleTypeDef` / `HAL_UART_Transmit` / `HAL_GetTick`。
-不同 STM32 系列的 HAL 头文件名不同，必须在工程 CMake 中显式指定。
-
-STM32CubeMX CMake 工程在 [cmake/stm32cubemx/CMakeLists.txt](cmake/stm32cubemx/CMakeLists.txt)
-中自动写入子型号宏（如 `STM32G030xx`），但不暴露家族宏给 skill，所以**skill 默认按 F4 写**。
-
-非 F4 工程必须覆盖。
-
-### 家族对应表
-
-| STM32 家族 | `STM_LOG_HAL_HEADER` |
-|---|---|
-| STM32F0  | `"stm32f0xx_hal.h"`  |
-| STM32F1  | `"stm32f1xx_hal.h"`  |
-| STM32F2  | `"stm32f2xx_hal.h"`  |
-| STM32F3  | `"stm32f3xx_hal.h"`  |
-| STM32F4  | `"stm32f4xx_hal.h"`  |  ← 默认
-| STM32F7  | `"stm32f7xx_hal.h"`  |
-| STM32G0  | `"stm32g0xx_hal.h"`  |
-| STM32G4  | `"stm32g4xx_hal.h"`  |
-| STM32H5  | `"stm32h5xx_hal.h"`  |
-| STM32H7  | `"stm32h7xx_hal.h"`  |
-| STM32L0  | `"stm32l0xx_hal.h"`  |
-| STM32L1  | `"stm32l1xx_hal.h"`  |
-| STM32L4  | `"stm32l4xx_hal.h"`  |
-| STM32L5  | `"stm32l5xx_hal.h"`  |
-| STM32U5  | `"stm32u5xx_hal.h"`  |
-| STM32WB  | `"stm32wbxx_hal.h"`  |
-| STM32WL  | `"stm32wlxx_hal.h"`  |
-| STM32C0  | `"stm32c0xx_hal.h"`  |
-
-### 工程根 CMake 写法
-
-在 `FetchContent_MakeAvailable(stm_log)` 之后追加：
+## 基本配置
 
 ```cmake
+include(FetchContent)
+FetchContent_Declare(
+    stm_log
+    GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
+    GIT_TAG        v3.0.0
+    SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
+)
 FetchContent_MakeAvailable(stm_log)
+
+set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable stm_log output (ON/OFF)")
 target_compile_definitions(stm_log PUBLIC
-    "STM_LOG_HAL_HEADER=\"stm32g0xx_hal.h\""
+    STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
 )
 ```
 
-注意 CMake 转义：`STM_LOG_HAL_HEADER` 在头文件中通过
-`#include STM_LOG_HAL_HEADER` 展开为 `#include "stm32g0xx_hal.h"`，所以宏的
-值必须是带引号的字符串字面量。CMake 中 `target_compile_definitions` 会剥一层
-引号，所以传入 `"STM_LOG_HAL_HEADER=\"stm32g0xx_hal.h\""`。最终编译命令
-里宏的实际定义为 `STM_LOG_HAL_HEADER="stm32g0xx_hal.h"`。
+不再设置 `STM_LOG_HAL_HEADER` 或 `STM_LOG_LINK_CUBEMX`；这两个旧版配置在 v3 中不存在。
 
-### 用 CACHE 写法（可选）
+## 应用接入
+
+先提供毫秒时钟，再绑定输出。回调必须在返回前完成发送或复制数据，不能保存传入的临时指针。
+
+```c
+static void uart_output(const char *data, uint16_t len)
+{
+    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
+}
+
+stm_log_set_tick(HAL_GetTick);
+stm_log_init_output(uart_output, STM_LOG_LVL_INFO);
+```
+
+RTT 只替换回调：
+
+```c
+static void rtt_output(const char *data, uint16_t len)
+{
+    SEGGER_RTT_Write(0, data, len);
+}
+
+SEGGER_RTT_Init();
+stm_log_set_tick(HAL_GetTick);
+stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
+```
+
+`stm_log_init(&huart1, level)` 已移除；不能用 `stm_log_set_output(NULL)` 恢复默认 UART，因为 v3 没有内置 UART 后端。
+
+## RTT 依赖
+
+需要 RTT 时，在 `FetchContent_MakeAvailable(stm_log)` 之前设置：
 
 ```cmake
-set(STM_LOG_HAL_HEADER "stm32g0xx_hal.h" CACHE STRING "" FORCE)
-FetchContent_MakeAvailable(stm_log)
+set(STM_LOG_WITH_RTT ON)
 ```
 
-这种写法 `set(...)` 必须放在 `FetchContent_MakeAvailable()` 之前才生效。
+由 `stm_log` 创建并 PUBLIC 传递 `segger_rtt` target。工程的 `main/CMakeLists.txt` 只链接 `stm_log`，不单独 FetchContent、include 或链接 `segger_rtt`。
 
-### 失败信号
-
-如果忘了覆盖，构建会爆：
-
-```text
-stm_log_config.h:24:#include STM_LOG_HAL_HEADER
-stm_log.h: fatal error: stm32f4xx_hal.h: No such file or directory
-```
-
-或者：
-
-```text
-fatal error: stm_log: HAL header not found.
-```
-
-## STM_LOG_LINK_CUBEMX（v2.3.1+ 默认 ON）
-
-库默认自动 link CubeMX 生成的 `stm32cubemx` target。
-非 CubeMX 工程、自定义 HAL target 命名时可关：
+可选变量：
 
 ```cmake
-set(STM_LOG_LINK_CUBEMX OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(stm_log)
-target_link_libraries(${CMAKE_PROJECT_NAME} stm_log your_hal_target)
+set(STM_LOG_RTT_SOURCE_DIR "C:/path/to/RTT" CACHE PATH "")
+set(STM_LOG_RTT_GIT_REPOSITORY "https://github.com/NingZiXi/RTT.git" CACHE STRING "")
+set(STM_LOG_RTT_FETCH OFF CACHE BOOL "")
+set(STM_LOG_RTT_CONFIG_DIR "C:/path/to/config" CACHE PATH "")
 ```
 
-## 必读警告
+组件会优先使用同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则按固定提交下载。源码可放在 `Lib/`，编译产物仍在 `build/`。
 
-如果你的工程是 STM32G0/STM32H7/STM32U5 等非 F4 系列，**默认模板在 §3 之后必须
-追加本节 STM_LOG_HAL_HEADER 配置**，否则构建失败。
+## 常见错误
+
+- `undefined reference to stm_log_init`：模板仍使用旧 v2 初始化接口，改为输出回调 + `stm_log_init_output`。
+- `undefined reference to SEGGER_RTT_Init`：开启 `STM_LOG_WITH_RTT`，并确认 RTT 源可用。
+- 日志库报 `stm32f4xx_hal.h not found`：检查实际 checkout 和编译路径，可能仍编译了旧版本。v3 不读取 `STM_LOG_HAL_HEADER`，仅保留该宏不会引发 include；应用自身的 HAL 依赖仍须正确配置。

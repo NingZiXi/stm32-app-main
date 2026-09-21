@@ -1,200 +1,67 @@
-# Debug / Release 构建优化（RTT + stm_log 整链路裁剪）
+# Debug / Release 日志裁剪
 
-调试阶段需要看日志（哪个中断触发了、串口收到了什么数据），出货阶段只需要最小固件。把"日志链路"做成**编译期开关**能省 **~13 KB FLASH + ~2 KB RAM**，几乎免费。
+`stm_log v3.0.0` 支持 `STM_LOG_ENABLED` 编译期开关。工程应同时给应用和 `stm_log` target 传递同一个值，确保 LOG 宏和库实现一致。
 
-## 核心思想
-
-| 资源 | Debug（带日志） | Release（无日志） |
-|---|---|---|
-| **stm_log 库** | 链入（~1.5 KB） | 链入但 `--gc-sections` 剔除未用函数（净 0 KB） |
-| **SEGGER RTT 库** | 链入（~3 KB） | 链入但 GC 剔除（净 0 KB） |
-| **newlib printf** | 链入（~1.5 KB） | GC 剔除（净 0 KB） |
-| **HAL 默认代码** | `-O0` 全部编译 | `-Os` + `NDEBUG` 砍 ~30% |
-
-**关键机制**：
-- `target_link_libraries(... stm_log segger_rtt)` **始终链**（不条件）
-- `STM_LOG_ENABLED=0` 让 `LOGx` 宏变 `do{}while(0)` 空操作
-- 链接器 `--gc-sections`（CubeMX 默认开）把没引用的函数全删
-
----
-
-## 前提：stm_log 版本 ≥ v2.3.1
-
-`stm_log` v2.3.1+ 的 `stm_log_config.h` 已经把 `STM_LOG_ENABLED` 用 `#ifndef` 保护：
-
-```c
-#ifndef STM_LOG_ENABLED
-#define STM_LOG_ENABLED 1
-#endif
-```
-
-这是关键——避免命令行 `-DSTM_LOG_ENABLED=0` 与文件内 `#define` 触发 redefinition 警告。
-
-> 如果 FetchContent 拉到的版本 < v2.3.1，需要**手动改** `Lib/stm_log/stm_log_config.h` 加 `#ifndef`，或升级 tag。**升级到 v2.3.1 是首选**。
-
----
-
-## 三步接入
-
-### ① 根 `CMakeLists.txt` 加 CONFIG_LOG_ENABLED 开关
+## CMake
 
 ```cmake
-# 调试日志开关：默认按 build type 自动（Debug=ON / Release=OFF），可用 -DLOG_ENABLED=ON/OFF 覆盖
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(_LOG_ENABLED_DEFAULT ON)
-else()
-    set(_LOG_ENABLED_DEFAULT OFF)
-endif()
-option(CONFIG_LOG_ENABLED "Enable RTT + stm_log debug logging" ${_LOG_ENABLED_DEFAULT})
-
-# 联动两个宏：CONFIG_LOG_ENABLED（业务开关）+ STM_LOG_ENABLED（stm_log 库开关）
+set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable stm_log output (ON/OFF)")
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
+)
+target_compile_definitions(stm_log PUBLIC
     STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
 )
-target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>)
-
-# 始终链（让链接器 GC 自动剔除不用的）
-target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)
-if(TARGET segger_rtt)
-    target_link_libraries(${CMAKE_PROJECT_NAME} segger_rtt)
-endif()
 ```
 
-### ② `main/app_main.c` 任何位置都能写 LOGx
+需要 RTT 时，仍由 `stm_log` 的 `STM_LOG_WITH_RTT=ON` 管理依赖；工程不单独链接 `segger_rtt`。
+
+## 应用模板
+
+`stm_log.h` 始终包含。RTT 应用在日志开启时完成初始化：
 
 ```c
-#include "main.h"
-#include "stm_log.h"                  /* 永远 include，宏由 STM_LOG_ENABLED 控制 */
+#include "stm_log.h"
+#include "SEGGER_RTT.h"
 
-#if CONFIG_LOG_ENABLED
-#include "SEGGER_RTT.h"               /* SEGGER_RTT_Init() 等用 */
-#endif
-
-#if CONFIG_LOG_ENABLED
-static const char *TAG = "main";
-
-static void rtt_output(const char *buf, uint16_t len) {
-    SEGGER_RTT_Write(0, buf, len);
+static void rtt_output(const char *data, uint16_t len)
+{
+    SEGGER_RTT_Write(0, data, len);
 }
-#endif
 
-void app_main(void) {
-    /* 业务初始化（不带日志） */
-    
-#if CONFIG_LOG_ENABLED
+void app_main(void)
+{
     SEGGER_RTT_Init();
+    stm_log_set_tick(HAL_GetTick);
     stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
-#endif
-    
-    LOGI(TAG, "Boot ...");             /* 任何位置都能写 */
-    
-    for (;;) {
-        LOGI(TAG, "tick=%lu", HAL_GetTick());    /* 不会被 link error */
-        HAL_Delay(10);
-    }
+    LOGI("main", "Boot");
 }
 ```
 
-**关键**：不要在 CONFIG_LOG_ENABLED=OFF 时手动 `#include "stm_log.h"` 外面加 `#if`——让它**永远 include**，让 `STM_LOG_ENABLED=0` 把宏变 no-op。
+若工程希望在 `CONFIG_LOG_ENABLED=OFF` 时不包含 RTT 源，可用条件编译保护 `SEGGER_RTT.h` 和初始化代码，同时关闭 `STM_LOG_WITH_RTT`；不要条件删除 `stm_log.h`。
 
-### ③ 不需要手动改 `stm_log_config.h`
-
-上游 `stm_log` v2.3.1+ 已经包含 `#ifndef` 保护。FetchContent 拉到本地后即可使用。
-
----
-
-## 触发方式
-
-### IDE（STM32CubeIDE for VSCode）
-
-1. 底部状态栏 CMake: [Debug ▼] → 切到 **Release**
-2. Ctrl+Shift+P → `CMake: Delete Cache and Reconfigure`
-3. Ctrl+Shift+B 构建
-
-### 命令行
+## 构建
 
 ```bash
-# 默认按 build type
-cmake --build build/Debug      # LOG=ON
-cmake --build build/Release    # LOG=OFF
-
-# 手动覆盖
-cmake -S . -B build/Debug -DLOG_ENABLED=OFF   # Debug 但不打印
-cmake -S . -B build/Release -DLOG_ENABLED=ON  # Release 但带日志
-```
-
----
-
-## 预期 FLASH 对比
-
-| 配置 | RAM | FLASH |
-|---|---|---|
-| Debug + LOG=ON（默认） | ~5.3 KB | ~27 KB |
-| Debug + LOG=OFF + `-Os` | ~3 KB | ~18 KB |
-| **Release + LOG=OFF（默认）** | **~2.9 KB** | **~13 KB** |
-| Release + LOG=OFF + `-Os` | ~2.5 KB | ~11 KB |
-
----
-
-## 验证步骤
-
-### 1. 检查宏是否生效
-
-```bash
-# Release build 后的预处理结果应包含：
-grep "STM_LOG_ENABLED" build/Release/CMakeFiles/stm32_pm3009_modbus.dir/main/app_main.cpp.obj.d 2>/dev/null
-# 或直接看 .map 文件
-cat build/Release/stm32_pm3009_modbus.map | grep -E "stm_log|SEGGER_RTT"
-```
-
-OFF 时应该看到 `stm_log_*` / `SEGGER_RTT_*` 函数**不在 .map**（被 GC）。
-
-### 2. 验证 CONFIG_LOG_ENABLED 切换有效
-
-```bash
-# Debug build（默认 ON）
-cmake -S . -B build/Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build/Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCONFIG_LOG_ENABLED=ON
 cmake --build build/Debug
-arm-none-eabi-size build/Debug/stm32_pm3009_modbus.elf
-# 预期：~27 KB FLASH
-
-# 切到 OFF
-cmake -S . -B build/Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLOG_ENABLED=OFF
-cmake --build build/Debug
-arm-none-eabi-size build/Debug/stm32_pm3009_modbus.elf
-# 预期：~18-22 KB FLASH（LOG 砍掉 ~5 KB）
+cmake -S . -B build/Release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCONFIG_LOG_ENABLED=OFF
+cmake --build build/Release
 ```
 
-### 3. 验证 .elf 里 stm_log 函数被 GC
+结合 `-ffunction-sections -fdata-sections` 和链接器 `--gc-sections`，关闭日志后未引用的格式化、输出和 RTT 代码会被回收。实际节省量应以 `.map` 和 `arm-none-eabi-size` 为准，不能按固定 KB 承诺。
+
+## 验证
 
 ```bash
-arm-none-eabi-nm build/Debug/stm32_pm3009_modbus.elf | grep stm_log
-# OFF 时应该为空
-# ON 时应该看到 stm_log、stm_log_init_output、stm_log_hex 等
+arm-none-eabi-nm build/Release/*.elf | Select-String stm_log
+arm-none-eabi-size build/Debug/*.elf build/Release/*.elf
 ```
 
----
+确认 Debug 有日志符号，Release 的日志调用被裁剪或不再产生输出。`STM_LOG_ENABLED` 必须只由 CMake 统一定义，避免宏重定义警告。
 
-## 失败分流
+## 常见错误
 
-| 现象 | 原因 | 修复 |
-|---|---|---|
-| `undefined reference to stm_log_init_output` | stm_log 版本 < v2.3.0 | 升级 `GIT_TAG v2.2.0` → `v2.3.1` |
-| `'STM_LOG_ENABLED' redefined` 警告 | `stm_log_config.h` 没有 `#ifndef` 保护 | 升级到 v2.3.1+，或手动加保护 |
-| `'LOGI' was not declared in this scope` | 没 `#include "stm_log.h"` | 在任何用 LOGx 的文件里 include |
-| `redefinition of '_write'` | newlib 重定义 syscalls | 检查 `syscalls.c` 和 `Core/Src/syscalls.c` 是否有冲突 |
-| Release 不省 FLASH | `-Os` 没生效 | CMakeCache 里 `CMAKE_C_FLAGS_RELEASE` 应该是 `-O3 -DNDEBUG` 或 `-Os -DNDEBUG` |
-
----
-
-## 关键不变式
-
-不管 `CONFIG_LOG_ENABLED` 是 ON 还是 OFF：
-
-1. **`stm_log` 和 `SEGGER_RTT` 始终链入工程**（让 GC 处理）
-2. **`stm_log.h` 始终 include**（让宏总是有定义）
-3. **LOGx 宏永远可写**（OFF 时变空操作，编译不报错）
-4. **`SEGGER_RTT_Init()` 等仍需 `#if CONFIG_LOG_ENABLED`**（OFF 时根本不调这些函数，链接器 GC 干净）
-
-这条不变式让代码**不需要为 Release 改任何东西**——只要 CMake 切一下，FLASH 自动下来。
+- `STM_LOG_ENABLED redefined`：检查工程是否在其他头文件手动定义了该宏。
+- `undefined reference to stm_log_init`：这是 v2 API；v3 使用输出回调、`stm_log_set_tick`、`stm_log_init_output`。
+- `undefined reference to SEGGER_RTT_Init`：启用 `STM_LOG_WITH_RTT` 或移除 RTT 应用代码。
