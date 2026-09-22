@@ -2,23 +2,26 @@
 
 把 STM32CubeMX + CMake 工程整理为独立的 `main/` 业务子模块。技能会识别 FreeRTOS 或裸机入口，将 `app_main()` 接到 CubeMX 的 USER CODE 区域，并保持 `cmake/` 与 `Core/` 的生成结构稳定。
 
-日志模板基于 **stm_log v3.0.0**：核心不依赖 HAL、不初始化 UART，所有后端都使用应用输出回调；RTT 由 `STM_LOG_WITH_RTT=ON` 交给 stm_log 管理。
+日志默认查询并使用 **stm_log 最新正式版**，将查询到的具体标签锁定在工程中。模板使用平台无关的输出回调 API；RTT 由 `STM_LOG_WITH_RTT=ON` 交给 stm_log 管理，源码放在 `Lib/segger_rtt/`。
 
 ## 目录和流程
 
 ```text
 工程/
-├── CMakeLists.txt       # FetchContent(stm_log v3.0.0) + add_subdirectory(main)
+├── CMakeLists.txt       # FetchContent(stm_log) + add_subdirectory(main)
 ├── Core/                # CubeMX 生成代码
 ├── Lib/stm_log/         # SOURCE_DIR 指定的组件源码
+├── Lib/segger_rtt/      # stm_log 自动下载或复用的 RTT 源码
 └── main/
     ├── CMakeLists.txt
     └── app_main.c
 ```
 
-执行步骤：探测工程 → 创建 `main/` → 配置并拉取 stm_log → 接入入口 → 构建验证。FreeRTOS 使用 `StartDefaultTask` 的 USER CODE 5；裸机使用 `main.c` 的 USER CODE 2。
+执行步骤：探测工程 → 创建 `main/` → 查询并锁定 stm_log 最新正式版 → 配置依赖 → 接入入口 → 构建验证。FreeRTOS 使用 `StartDefaultTask` 的 USER CODE 5；裸机使用 `main.c` 的 USER CODE 2。
 
 ## stm_log 接入
+
+先按 [版本选择规则](references/stm-log-version.md) 查询远端正式标签，再填写 `GIT_TAG`。以下 `v3.0.1` 只是示例，不是固定默认版本；普通重编译不会自动升级已锁定的依赖。
 
 ```cmake
 include(FetchContent)
@@ -26,7 +29,7 @@ set(STM_LOG_WITH_RTT ON) # UART 后端改为 OFF
 FetchContent_Declare(
     stm_log
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG        v3.0.0
+    GIT_TAG        v3.0.1 # 示例：替换为本次查询到的正式标签
     SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
 )
 FetchContent_MakeAvailable(stm_log)

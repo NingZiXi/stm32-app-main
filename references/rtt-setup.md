@@ -2,19 +2,21 @@
 
 RTT 是 `stm_log` 的可选传递依赖，不由主工程单独声明。需要 RTT 时，在拉取 `stm_log` 前设置：
 
+先按 [版本选择](stm-log-version.md) 查询最新正式标签；以下 `v3.0.1` 只是示例，执行时替换为本次选中的标签。
+
 ```cmake
 include(FetchContent)
 set(STM_LOG_WITH_RTT ON)
 FetchContent_Declare(
     stm_log
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG v3.0.0
+    GIT_TAG v3.0.1 # 示例：替换为本次查询到的正式标签
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
 )
 FetchContent_MakeAvailable(stm_log)
 ```
 
-`stm_log` 会优先寻找同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则按组件中固定的 RTT 提交自动下载。它创建 `segger_rtt` 静态库并通过 `stm_log` 的 PUBLIC 链接关系传给最终应用。`main/CMakeLists.txt` 只写：
+`stm_log` 会优先寻找同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则按组件中固定的 RTT 提交自动下载到 `Lib/segger_rtt/`。它创建 `segger_rtt` 静态库并通过 `stm_log` 的 PUBLIC 链接关系传给最终应用。`main/CMakeLists.txt` 只写：
 
 ```cmake
 target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)
@@ -52,13 +54,13 @@ HAL 只出现在应用：`stm_log` 不需要 `STM_LOG_HAL_HEADER`，也不链接
 
 ```text
 Lib/
-├── stm_log/       # v3.0.0
-└── segger_rtt/    # 可选，本地 RTT 源码
+├── stm_log/       # 本次查询后锁定的最新正式版
+└── segger_rtt/    # 自动下载或复用的 RTT 源码
 ```
 
 离线构建可设置 `STM_LOG_RTT_SOURCE_DIR`；禁止下载则设置 `STM_LOG_RTT_FETCH=OFF`。自定义 `SEGGER_RTT_Conf.h` 所在目录通过 `STM_LOG_RTT_CONFIG_DIR` 传入。
 
-v3.0.0 自动下载的 RTT 默认位于构建目录 `_deps/`；已有同级源码才会复用 `Lib/`，不能承诺首次下载自动落在 `Lib/`。显式源码目录须已含 `RTT/SEGGER_RTT.c`、`RTT/SEGGER_RTT.h` 和 `Config/SEGGER_RTT_Conf.h`。已有 target 优先于显式目录，显式目录优先于同级目录，最后才下载；本地版本由应用负责。
+stm_log 自 v3.0.1 起将自动下载的 RTT 源码放在自身同级的 `segger_rtt/`；按本技能布局即 `Lib/segger_rtt/`。只有下载管理文件和编译产物位于构建目录，清理 `build/` 不会删除 RTT 源码。显式源码目录须已含 `RTT/SEGGER_RTT.c`、`RTT/SEGGER_RTT.h` 和 `Config/SEGGER_RTT_Conf.h`。已有 target 优先于显式目录，显式目录优先于同级目录，最后才下载；本地版本由应用负责。
 
 ## 验证
 

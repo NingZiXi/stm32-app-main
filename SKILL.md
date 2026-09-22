@@ -1,6 +1,6 @@
 ---
 name: stm32-app-main
-description: 把 STM32CubeMX + CMake 工程整理为 main/ 子模块结构：业务代码放入 main/，通过 add_subdirectory(main) 构建，不修改 cmake/ 或 Core/ 的生成结构。支持 FreeRTOS 与裸机。日志使用 stm_log v3.0.0；核心不依赖 HAL，UART/RTT 都由应用回调接入，RTT 由 STM_LOG_WITH_RTT=ON 交给 stm_log 管理。用户提到初始化 app_main、业务代码独立到 main/、裸机改造、RTT 后端或 J-Link RTT 时使用。
+description: 把 STM32CubeMX + CMake 工程整理为 main/ 子模块结构：业务代码放入 main/，通过 add_subdirectory(main) 构建，不修改 cmake/ 或 Core/ 的生成结构。支持 FreeRTOS 与裸机。日志默认查询并使用 stm_log 最新正式版；核心不依赖 HAL，UART/RTT 由应用回调接入，RTT 由 STM_LOG_WITH_RTT=ON 管理。用户提到初始化 app_main、业务代码独立到 main/、裸机改造、RTT 后端或 J-Link RTT 时使用。
 ---
 
 # STM32CubeMX 工程 → main/ 子模块
@@ -19,7 +19,8 @@ description: 把 STM32CubeMX + CMake 工程整理为 main/ 子模块结构：业
 工程/
 ├── CMakeLists.txt       # stm_log FetchContent + add_subdirectory(main)
 ├── Core/                # CubeMX 生成代码
-├── Lib/stm_log/         # v3.0.0，SOURCE_DIR 指定
+├── Lib/stm_log/         # 本次查询后锁定的最新正式版，SOURCE_DIR 指定
+├── Lib/segger_rtt/      # 启用 RTT 时由 stm_log 自动下载或复用
 └── main/
     ├── CMakeLists.txt
     └── app_main.c
@@ -33,11 +34,13 @@ description: 把 STM32CubeMX + CMake 工程整理为 main/ 子模块结构：业
    根据实际启动任务和 CMSIS-OS 版本选模板；沿用工程已有日志后端。已有 `main/` 时合并必要改动，保留业务，不直接覆盖。
 2. 创建 `main/`，从 `assets/` 复制对应的 `CMakeLists.txt` 和 `app_main` 模板。
    UART：FreeRTOS 用 `app_main.c`，裸机用 `app_main_bare.c`；RTT 分别用 `app_main_rtt.c`、`app_main_bare_rtt.c`。目标文件均命名为 `main/app_main.c`，不新增头文件。注释遵循 [注释规范](references/code-comment-style.md)。
-3. 在根 CMake 中添加 stm_log v3.0.0 和 `add_subdirectory(main)`。
+3. 按 [版本选择](references/stm-log-version.md) 查询并锁定 stm_log 最新正式标签，在根 CMake 中添加依赖和 `add_subdirectory(main)`。
 4. 将 `app_main()` 放到正确的 USER CODE 区域。
 5. 构建 Debug 固件，检查没有旧版 stm_log API 或 RTT 链接错误。
 
-## stm_log v3.0.0 接入
+## stm_log 接入
+
+先完成 [版本选择](references/stm-log-version.md)。以下 `v3.0.1` 仅为示例，执行时必须替换为本次查询到的最新正式标签；用户明确指定版本时使用指定值。
 
 ```cmake
 include(FetchContent)
@@ -46,7 +49,7 @@ set(STM_LOG_WITH_RTT ON)
 FetchContent_Declare(
     stm_log
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG        v3.0.0
+    GIT_TAG        v3.0.1 # 示例：替换为本次查询到的正式标签
     SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
 )
 FetchContent_MakeAvailable(stm_log)
@@ -87,7 +90,7 @@ stm_log_init_output(uart_output, STM_LOG_LVL_INFO);
 
 ### RTT
 
-根 CMake 设置 `STM_LOG_WITH_RTT ON` 后，stm_log 会优先复用同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则自动拉取固定 RTT 源码，创建 `segger_rtt` 并通过 PUBLIC 依赖传递。主工程不再声明 `FetchContent(segger_rtt)`，不再 include `CMakeLists_rtt.txt`，`main/CMakeLists.txt` 也不单独链接 `segger_rtt`。
+根 CMake 设置 `STM_LOG_WITH_RTT ON` 后，stm_log 会优先复用同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则自动拉取固定 RTT 源码到 `Lib/segger_rtt/`，创建 `segger_rtt` 并通过 PUBLIC 依赖传递。主工程不再声明 `FetchContent(segger_rtt)`，不再 include `CMakeLists_rtt.txt`，`main/CMakeLists.txt` 也不单独链接 `segger_rtt`。
 
 ```c
 static void rtt_output(const char *data, uint16_t len)

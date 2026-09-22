@@ -10,6 +10,8 @@
 
 ## 根 CMake
 
+先按 [版本选择](stm-log-version.md) 查询最新正式标签。下文 `v3.0.1` 仅为示例，生成工程时替换为实际选中值。
+
 ```cmake
 add_subdirectory(cmake/stm32cubemx)
 
@@ -18,7 +20,7 @@ set(STM_LOG_WITH_RTT ON) # UART 后端改为 OFF
 FetchContent_Declare(
     stm_log
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG        v3.0.0
+    GIT_TAG        v3.0.1 # 示例：替换为本次查询到的正式标签
     SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
 )
 FetchContent_MakeAvailable(stm_log)
@@ -65,7 +67,7 @@ RTT 回调改用 `SEGGER_RTT_Write`，并在此之前调用 `SEGGER_RTT_Init()`�
 
 ## FetchContent 路径
 
-`SOURCE_DIR` 将源码放在 `<root>/Lib/stm_log/`，编译产物仍在 `build/`。目录存在不代表跳过 Git 更新。离线时准备好 v3.0.0 源码，再显式设置本地覆盖：
+`SOURCE_DIR` 将源码放在 `<root>/Lib/stm_log/`，RTT 自动下载到同级的 `<root>/Lib/segger_rtt/`，编译产物仍在构建目录。目录存在不代表跳过 Git 更新。离线时准备好与锁定标签一致的源码，再显式设置本地覆盖：
 
 ```bash
 cmake --preset Debug -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"

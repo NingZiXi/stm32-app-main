@@ -1,15 +1,17 @@
-# stm_log v3.0.0 配置参考
+# stm_log 回调 API 配置参考
 
-`stm_log` v3.0.0 是平台无关的 C 日志核心，不包含 HAL/CMSIS 头文件，也不初始化 UART。UART、RTT、SWO 和 USB CDC 都由应用提供输出回调。
+`stm_log` v3 系列使用平台无关的 C 日志核心，不包含 HAL/CMSIS 头文件，也不初始化 UART。UART、RTT、SWO 和 USB CDC 都由应用提供输出回调。实际版本按 [版本选择](stm-log-version.md) 查询最新正式标签；若新版 API 变化，以该版本的公开头文件为准。
 
 ## 基本配置
+
+下文 `v3.0.1` 仅为示例，填写本次查询到的正式标签。
 
 ```cmake
 include(FetchContent)
 FetchContent_Declare(
     stm_log
     GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG        v3.0.0
+    GIT_TAG        v3.0.1 # 示例：替换为本次查询到的正式标签
     SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
 )
 FetchContent_MakeAvailable(stm_log)
@@ -70,7 +72,7 @@ set(STM_LOG_RTT_FETCH OFF CACHE BOOL "")
 set(STM_LOG_RTT_CONFIG_DIR "C:/path/to/config" CACHE PATH "")
 ```
 
-组件会优先使用同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则按固定提交下载。源码可放在 `Lib/`，编译产物仍在 `build/`。
+组件会优先使用同级 `Lib/segger_rtt/` 或 `Lib/RTT/`，否则按固定提交下载到 `Lib/segger_rtt/`。源码固定在 `Lib/`，编译产物仍在构建目录。
 
 ## 常见错误
 

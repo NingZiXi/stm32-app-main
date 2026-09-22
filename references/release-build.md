@@ -1,6 +1,6 @@
 # Debug / Release 日志裁剪
 
-`stm_log v3.0.0` 支持 `STM_LOG_ENABLED` 编译期开关。工程应同时给应用和 `stm_log` target 传递同一个值，确保 LOG 宏和库实现一致。
+`stm_log` 的回调 API 版本支持 `STM_LOG_ENABLED` 编译期开关。版本按 [版本选择](stm-log-version.md) 查询并锁定；工程应同时给应用和 `stm_log` target 传递同一个值，确保 LOG 宏和库实现一致。
 
 ## CMake
 
