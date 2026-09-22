@@ -7,6 +7,7 @@
 | 根 `CMakeLists.txt` | 添加 `stm_log` FetchContent、配置日志选项、`add_subdirectory(main)` |
 | `main/CMakeLists.txt` | 添加 `app_main.c`，只链接 `stm_log` |
 | `cmake/`、`Core/` | 不改 CubeMX 生成区域；入口调用只放在 USER CODE 区域 |
+| `.vscode/tasks.json`、`.vscode/launch.json` | 每次执行都必须创建、合并或验证；保留正确的已有配置 |
 
 ## 根 CMake
 
@@ -74,6 +75,8 @@ cmake --preset Debug -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"
 ```
 
 ## 验证与错误
+
+先按 `SKILL.md` 的必做调试配置步骤关联构建任务与调试入口，再运行同一组 Debug 构建命令。只有编译成功、没有有效的 VS Code 调试配置时，任务仍未完成。
 
 ```bash
 cmake -S <root> -B <root>/build -G Ninja -DCMAKE_BUILD_TYPE=Debug

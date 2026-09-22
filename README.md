@@ -1,6 +1,6 @@
 # stm32-app-main
 
-把 STM32CubeMX + CMake 工程整理为独立的 `main/` 业务子模块。技能会识别 FreeRTOS 或裸机入口，将 `app_main()` 接到 CubeMX 的 USER CODE 区域，并保持 `cmake/` 与 `Core/` 的生成结构稳定。
+把 STM32CubeMX + CMake 工程整理为独立的 `main/` 业务子模块，并必须交付 VS Code 构建与调试配置。技能会识别 FreeRTOS 或裸机入口，将 `app_main()` 接到 CubeMX 的 USER CODE 区域，并保持 `cmake/` 与 `Core/` 的生成结构稳定。
 
 日志默认查询并使用 **stm_log 最新正式版**，将查询到的具体标签锁定在工程中。模板使用平台无关的输出回调 API；RTT 由 `STM_LOG_WITH_RTT=ON` 交给 stm_log 管理，源码放在 `Lib/segger_rtt/`。
 
@@ -9,6 +9,9 @@
 ```text
 工程/
 ├── CMakeLists.txt       # FetchContent(stm_log) + add_subdirectory(main)
+├── .vscode/
+│   ├── tasks.json       # 必须配置的构建任务
+│   └── launch.json      # 必须配置的调试入口
 ├── Core/                # CubeMX 生成代码
 ├── Lib/stm_log/         # SOURCE_DIR 指定的组件源码
 ├── Lib/segger_rtt/      # stm_log 自动下载或复用的 RTT 源码
@@ -17,7 +20,9 @@
     └── app_main.c
 ```
 
-执行步骤：探测工程 → 创建 `main/` → 查询并锁定 stm_log 最新正式版 → 配置依赖 → 接入入口 → 构建验证。FreeRTOS 使用 `StartDefaultTask` 的 USER CODE 5；裸机使用 `main.c` 的 USER CODE 2。
+执行步骤：探测工程 → 创建 `main/` → 查询并锁定 stm_log 最新正式版 → 配置依赖 → 接入入口 → 必须配置 VS Code 构建与调试 → 验证。FreeRTOS 使用 `StartDefaultTask` 的 USER CODE 5；裸机使用 `main.c` 的 USER CODE 2。
+
+每次执行技能都必须创建、合并或验证 `.vscode/tasks.json` 和 `.vscode/launch.json`，无需用户另行提出 F5 调试要求。已有正确配置予以保留；模板里的芯片、探针、工具路径、构建预设和 ELF 路径必须按实际工程适配。详细要求见 [SKILL.md](SKILL.md) 的“VS Code 调试配置（必做）”。
 
 ## stm_log 接入
 
@@ -100,6 +105,8 @@ cmake --build build/Debug
 
 若看到 `undefined reference to stm_log_init`，说明业务代码仍使用旧 v2 API；改为输出回调、`stm_log_set_tick` 和 `stm_log_init_output`。若 RTT 符号缺失，确认设置了 `STM_LOG_WITH_RTT=ON`。
 
+完成检查必须包含调试配置可解析、`preLaunchTask` 与任务标签一致、工具和 ELF 路径有效、相同构建任务执行成功。不能仅凭编译通过宣称交付完成；没有实际连接板卡时，明确区分配置验证与实机调试结果。
+
 ## 模板文件
 
 | 文件 | 用途 |
@@ -109,6 +116,8 @@ cmake --build build/Debug
 | `assets/app_main_bare.c` | 裸机 + UART |
 | `assets/app_main_rtt.c` | FreeRTOS + RTT |
 | `assets/app_main_bare_rtt.c` | 裸机 + RTT |
+| `assets/tasks.json` | 必须适配并合并的 VS Code 构建任务模板 |
+| `assets/launch.json` | 必须适配并合并的 VS Code 调试配置模板 |
 | `references/CMake-integration.md` | CMake 和 CubeMX 边界 |
 | `references/release-build.md` | 日志编译开关 |
 
