@@ -1,6 +1,7 @@
 if(NOT TARGET ${CMAKE_PROJECT_NAME})
-    message(FATAL_ERROR "No app target '${CMAKE_PROJECT_NAME}' for main/app_main.c; check the CubeMX project root and add_subdirectory(main) placement")
+    message(FATAL_ERROR "No app target '${CMAKE_PROJECT_NAME}' for main/app_main.c")
 endif()
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app_main.c)
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE stm_log)
+# CubeMX2's generated cmake/components.cmake links using the plain signature.
+target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)

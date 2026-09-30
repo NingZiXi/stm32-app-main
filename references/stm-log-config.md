@@ -1,6 +1,6 @@
 # stm_log 回调 API 配置参考
 
-`stm_log` v3 系列使用平台无关的 C 日志核心，不包含 HAL/CMSIS 头文件，也不初始化 UART。UART、RTT、SWO 和 USB CDC 都由应用提供输出回调。实际版本按 [版本选择](stm-log-version.md) 查询最新正式标签；若新版 API 变化，以该版本的公开头文件为准。
+两个 CubeMX 路径都要先询问用户选 UART 还是 RTT。下文 UART 句柄仅为 **CubeMX1/HAL1 示例**；CubeMX2/HAL2 接口见 [CubeMX2.md](CubeMX2.md)。`stm_log` v3 系列使用平台无关的 C 日志核心，不包含 HAL/CMSIS 头文件，也不初始化 UART。UART、RTT、SWO 和 USB CDC 都由应用提供输出回调。实际版本按 [版本选择](stm-log-version.md) 查询最新正式标签；若新版 API 变化，以该版本的公开头文件为准。
 
 ## 基本配置
 
@@ -79,3 +79,4 @@ set(STM_LOG_RTT_CONFIG_DIR "C:/path/to/config" CACHE PATH "")
 - `undefined reference to stm_log_init`：模板仍使用旧 v2 初始化接口，改为输出回调 + `stm_log_init_output`。
 - `undefined reference to SEGGER_RTT_Init`：开启 `STM_LOG_WITH_RTT`，并确认 RTT 源可用。
 - 日志库报 `stm32f4xx_hal.h not found`：检查实际 checkout 和编译路径，可能仍编译了旧版本。v3 不读取 `STM_LOG_HAL_HEADER`，仅保留该宏不会引发 include；应用自身的 HAL 依赖仍须正确配置。
+

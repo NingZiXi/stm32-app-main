@@ -40,6 +40,8 @@ void app_main(void)
 
 若工程希望在 `CONFIG_LOG_ENABLED=OFF` 时不包含 RTT 源，可用条件编译保护 `SEGGER_RTT.h` 和初始化代码，同时关闭 `STM_LOG_WITH_RTT`；不要条件删除 `stm_log.h`。
 
+下面的路径只是采用 `build/Debug` / `build/Release` 目录时的 MX1 风格示例。CubeMX2 应读取 `CMakePresets.json` 的实际预设、`binaryDir` 和 ELF，不能原样套用。
+
 ## 构建
 
 ```bash
@@ -65,3 +67,5 @@ arm-none-eabi-size build/Debug/*.elf build/Release/*.elf
 - `STM_LOG_ENABLED redefined`：检查工程是否在其他头文件手动定义了该宏。
 - `undefined reference to stm_log_init`：这是 v2 API；v3 使用输出回调、`stm_log_set_tick`、`stm_log_init_output`。
 - `undefined reference to SEGGER_RTT_Init`：启用 `STM_LOG_WITH_RTT` 或移除 RTT 应用代码。
+
+

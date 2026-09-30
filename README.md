@@ -1,126 +1,18 @@
 # stm32-app-main
 
-把 STM32CubeMX + CMake 工程整理为独立的 `main/` 业务子模块，并必须交付 VS Code 构建与调试配置。技能会识别 FreeRTOS 或裸机入口，将 `app_main()` 接到 CubeMX 的 USER CODE 区域，并保持 `cmake/` 与 `Core/` 的生成结构稳定。
+在 STM32CubeMX 1（`.ioc`）或 STM32CubeMX2（`.ioc2`）生成的 CMake 工程中，将业务逻辑接入独立 `main/`，配置 `stm_log`；RTT 模式按需配置 VS Code 构建/调试入口，UART 模式沿用默认设置。**动手选择日志模板之前，MX1 与 MX2 均须主动询问用户使用 UART 还是 RTT。**
 
-日志默认查询并使用 **stm_log 最新正式版**，将查询到的具体标签锁定在工程中。模板使用平台无关的输出回调 API；RTT 由 `STM_LOG_WITH_RTT=ON` 交给 stm_log 管理，源码放在 `Lib/segger_rtt/`。
+- [SKILL.md](SKILL.md)：识别、提问、流程与共同验收。
+- [MX1 CMake 集成](references/CMake-integration.md)：`Core/Src` 的 USER CODE 接入。
+- [MX2 集成](references/CubeMX2.md)：根 `main.c`、HAL2、CMake preset 和重生成冲突处理。
+- [版本选择](references/stm-log-version.md)：执行时确认并锁定正式版本；文档标签只是示例。
 
-## 目录和流程
+应用实现：`main/app_main.c`。`assets/app_main.c`、`app_main_bare.c`、`app_main_rtt.c`、`app_main_bare_rtt.c` 是 MX1/HAL1 模板；`assets/app_main_bare_mx2_uart.c`、`app_main_bare_mx2_rtt.c` 是依据 STM32C532CCT6 HAL2 工程写的 MX2 **裸机示例**，UART 外设需按实际工程修改。MX2 FreeRTOS 任务入口及 API 应检查实际产物，不直接复用 HAL1/旧 CMSIS-OS 模板。
 
-```text
-工程/
-├── CMakeLists.txt       # FetchContent(stm_log) + add_subdirectory(main)
-├── .vscode/
-│   ├── tasks.json       # 必须配置的构建任务
-│   └── launch.json      # 必须配置的调试入口
-├── Core/                # CubeMX 生成代码
-├── Lib/stm_log/         # SOURCE_DIR 指定的组件源码
-├── Lib/segger_rtt/      # stm_log 自动下载或复用的 RTT 源码
-└── main/
-    ├── CMakeLists.txt
-    └── app_main.c
-```
+`assets/CMakeLists.txt` 为 MX1 的 `main/` 模板；MX2 先核对生成目标的链接签名，再参照 `assets/CMakeLists_mx2.txt`；`assets/tasks.json`、`launch.json` 只提供结构示意，含 MX1 风格占位值，切勿原样用于其他芯片、工具链、探针或 MX2 preset。RTT 模式按实际工程配置并验证 VS Code；UART 模式不因日志接入而新建或改写 `.vscode/tasks.json`、`launch.json`。无法确认硬件时明确报告未验证。
 
-执行步骤：探测工程 → 创建 `main/` → 查询并锁定 stm_log 最新正式版 → 配置依赖 → 接入入口 → 必须配置 VS Code 构建与调试 → 验证。FreeRTOS 使用 `StartDefaultTask` 的 USER CODE 5；裸机使用 `main.c` 的 USER CODE 2。
+CubeMX2 的 `main.c` 是用户文件，但重新生成时的冲突处理仍可以覆盖它；入口调用和根 CMake 扩展应在重生成前备份，之后检查差异并验证。详见 [MX2 重生成](references/CubeMX2.md)。
 
-每次执行技能都必须创建、合并或验证 `.vscode/tasks.json` 和 `.vscode/launch.json`，无需用户另行提出 F5 调试要求。已有正确配置予以保留；模板里的芯片、探针、工具路径、构建预设和 ELF 路径必须按实际工程适配。详细要求见 [SKILL.md](SKILL.md) 的“VS Code 调试配置（必做）”。
+License: MIT，见 [LICENSE](LICENSE)。
 
-## stm_log 接入
 
-先按 [版本选择规则](references/stm-log-version.md) 查询远端正式标签，再填写 `GIT_TAG`。以下 `v3.0.1` 只是示例，不是固定默认版本；普通重编译不会自动升级已锁定的依赖。
-
-```cmake
-include(FetchContent)
-set(STM_LOG_WITH_RTT ON) # UART 后端改为 OFF
-FetchContent_Declare(
-    stm_log
-    GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG        v3.0.1 # 示例：替换为本次查询到的正式标签
-    SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
-)
-FetchContent_MakeAvailable(stm_log)
-
-set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable stm_log output (ON/OFF)")
-set(APP_VERSION "1.0.0" CACHE STRING "Application firmware version")
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    CONFIG_APP_VERSION="${APP_VERSION}"
-    CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
-)
-target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>)
-add_subdirectory(main)
-```
-
-`main/CMakeLists.txt` 只需 `target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)`。RTT 的 `segger_rtt` target 和头文件路径由 stm_log 的 PUBLIC 依赖传递；不再在根 CMake 单独 FetchContent 或包装 RTT。
-
-v3 中不再使用 `STM_LOG_HAL_HEADER`、`STM_LOG_LINK_CUBEMX` 或 `stm_log_init(&huart1, ...)`。
-
-### UART 模板
-
-```c
-static void uart_output(const char *data, uint16_t len)
-{
-    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
-}
-
-stm_log_set_tick(HAL_GetTick);
-stm_log_init_output(uart_output, STM_LOG_LVL_INFO);
-```
-
-### RTT 模板
-
-```cmake
-set(STM_LOG_WITH_RTT ON)
-```
-
-```c
-static void rtt_output(const char *data, uint16_t len)
-{
-    SEGGER_RTT_Write(0, data, len);
-}
-
-SEGGER_RTT_Init();
-stm_log_set_tick(HAL_GetTick);
-stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
-```
-
-完整模板位于 `assets/`，详细依赖说明见 [references/stm-log-config.md](references/stm-log-config.md) 和 [references/rtt-setup.md](references/rtt-setup.md)。
-
-## 源码位置和升级
-
-`SOURCE_DIR` 指定源码存放位置，不代表已有目录会跳过 Git 更新；FetchContent 仍管理固定 tag。离线时先准备匹配版本的完整源码，并设置本地覆盖：
-
-```bash
-cmake --preset Debug -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"
-```
-
-本地覆盖时由应用维护源码版本；不要通过删除依赖目录处理升级，先检查并保留未提交修改。
-
-## 验证
-
-```bash
-cmake -S . -B build/Debug -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-cmake --build build/Debug
-```
-
-若看到 `undefined reference to stm_log_init`，说明业务代码仍使用旧 v2 API；改为输出回调、`stm_log_set_tick` 和 `stm_log_init_output`。若 RTT 符号缺失，确认设置了 `STM_LOG_WITH_RTT=ON`。
-
-完成检查必须包含调试配置可解析、`preLaunchTask` 与任务标签一致、工具和 ELF 路径有效、相同构建任务执行成功。不能仅凭编译通过宣称交付完成；没有实际连接板卡时，明确区分配置验证与实机调试结果。
-
-## 模板文件
-
-| 文件 | 用途 |
-|---|---|
-| `assets/CMakeLists.txt` | `main/` 的构建入口，只链接 stm_log |
-| `assets/app_main.c` | FreeRTOS + UART |
-| `assets/app_main_bare.c` | 裸机 + UART |
-| `assets/app_main_rtt.c` | FreeRTOS + RTT |
-| `assets/app_main_bare_rtt.c` | 裸机 + RTT |
-| `assets/tasks.json` | 必须适配并合并的 VS Code 构建任务模板 |
-| `assets/launch.json` | 必须适配并合并的 VS Code 调试配置模板 |
-| `references/CMake-integration.md` | CMake 和 CubeMX 边界 |
-| `references/release-build.md` | 日志编译开关 |
-
-## License
-
-MIT —— 见 [LICENSE](LICENSE)。
