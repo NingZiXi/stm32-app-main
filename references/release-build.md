@@ -2,45 +2,17 @@
 
 `stm_log v3.0.0` 支持 `STM_LOG_ENABLED` 编译期开关。工程应同时给应用和 `stm_log` target 传递同一个值，确保 LOG 宏和库实现一致。
 
-## CMake
-
-```cmake
-set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable stm_log output (ON/OFF)")
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
-)
-target_compile_definitions(stm_log PUBLIC
-    STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
-)
-```
-
-需要 RTT 时，仍由 `stm_log` 的 `STM_LOG_WITH_RTT=ON` 管理依赖；工程不单独链接 `segger_rtt`。
+CMake 开关的定义见 [CMake 集成](CMake-integration.md)。Debug/Release 可以分别覆盖 `CONFIG_LOG_ENABLED`，不要在应用头文件重复定义 `STM_LOG_ENABLED`。
 
 ## 应用模板
 
-`stm_log.h` 始终包含。RTT 应用在日志开启时完成初始化：
-
-```c
-#include "stm_log.h"
-#include "SEGGER_RTT.h"
-
-static void rtt_output(const char *data, uint16_t len)
-{
-    SEGGER_RTT_Write(0, data, len);
-}
-
-void app_main(void)
-{
-    SEGGER_RTT_Init();
-    stm_log_set_tick(HAL_GetTick);
-    stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
-    LOGI("main", "Boot");
-}
-```
+`stm_log.h` 始终包含；日志开启时的输出初始化见 [日志回调](stm-log-config.md) 和对应 assets 模板。
 
 若工程希望在 `CONFIG_LOG_ENABLED=OFF` 时不包含 RTT 源，可用条件编译保护 `SEGGER_RTT.h` 和初始化代码，同时关闭 `STM_LOG_WITH_RTT`；不要条件删除 `stm_log.h`。
 
 ## 构建
+
+以下示例要求工程已配置实际工具链；有 preset 时使用工程预设，并按其 binaryDir 替换构建与 ELF 路径。
 
 ```bash
 cmake -S . -B build/Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCONFIG_LOG_ENABLED=ON
@@ -53,7 +25,7 @@ cmake --build build/Release
 
 ## 验证
 
-```bash
+```powershell
 arm-none-eabi-nm build/Release/*.elf | Select-String stm_log
 arm-none-eabi-size build/Debug/*.elf build/Release/*.elf
 ```

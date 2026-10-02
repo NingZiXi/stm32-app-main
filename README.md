@@ -1,114 +1,29 @@
 # stm32-app-main
 
-把 STM32CubeMX + CMake 工程整理为独立的 `main/` 业务子模块。技能会识别 FreeRTOS 或裸机入口，将 `app_main()` 接到 CubeMX 的 USER CODE 区域，并保持 `cmake/` 与 `Core/` 的生成结构稳定。
+将已有 STM32CubeMX1 的 CMake 工程接入独立 `main/app_main.c` 和 stm_log，支持裸机及经实际生成代码确认的 FreeRTOS 入口。本版本固定使用 stm_log v3.0.0；不负责创建 CubeMX 工程，也不声明 CubeMX2/HAL2 支持。
 
-日志模板基于 **stm_log v3.0.0**：核心不依赖 HAL、不初始化 UART，所有后端都使用应用输出回调；RTT 由 `STM_LOG_WITH_RTT=ON` 交给 stm_log 管理。
+## 安装与使用
 
-## 目录和流程
+将整个技能目录放到 Agent 客户端支持的技能位置，确保目录下直接有 `SKILL.md`，并保留 references/assets。是否需要重新加载、能否自动发现，取决于客户端；执行前确认实际加载的目录和版本。
 
-```text
-工程/
-├── CMakeLists.txt       # FetchContent(stm_log v3.0.0) + add_subdirectory(main)
-├── Core/                # CubeMX 生成代码
-├── Lib/stm_log/         # SOURCE_DIR 指定的组件源码
-└── main/
-    ├── CMakeLists.txt
-    └── app_main.c
-```
+例如：使用 stm32-app-main 在现有 `.ioc` + CMake 工程中接入独立 main/，保留业务代码，选择 UART 或 RTT 输出并构建核验。
 
-执行步骤：探测工程 → 创建 `main/` → 配置并拉取 stm_log → 接入入口 → 构建验证。FreeRTOS 使用 `StartDefaultTask` 的 USER CODE 5；裸机使用 `main.c` 的 USER CODE 2。
+执行要求见 [SKILL.md](SKILL.md)。技能读取目标工程的指令并按实际接口适配；模板中的串口、芯片、调试器路径和注释元数据需要按工程调整。
 
-## stm_log 接入
+## 阅读与资源
 
-```cmake
-include(FetchContent)
-set(STM_LOG_WITH_RTT ON) # UART 后端改为 OFF
-FetchContent_Declare(
-    stm_log
-    GIT_REPOSITORY https://gitee.com/nzxhg/stm_log.git
-    GIT_TAG        v3.0.0
-    SOURCE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/stm_log
-)
-FetchContent_MakeAvailable(stm_log)
+| 材料 | 职责 |
+| --- | --- |
+| [SKILL.md](SKILL.md) | 识别工程、选择模板、接入入口与交付验证 |
+| [CMake 集成](references/CMake-integration.md) | 固定依赖、源码位置、入口声明及构建 |
+| [日志配置](references/stm-log-config.md) | 输出回调与 v3 API 边界 |
+| [RTT](references/rtt-setup.md) | 仅 RTT 后端的依赖、离线与观察方法 |
+| [日志裁剪](references/release-build.md) | 开关及 Debug/Release 验证 |
+| [注释](references/code-comment-style.md) | 目标应用约定的适配 |
+| assets/ | 裸机/FreeRTOS、UART/RTT 和可选 VS Code 示例 |
 
-set(CONFIG_LOG_ENABLED ON CACHE STRING "Enable stm_log output (ON/OFF)")
-set(APP_VERSION "1.0.0" CACHE STRING "Application firmware version")
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    CONFIG_APP_VERSION="${APP_VERSION}"
-    CONFIG_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>
-)
-target_compile_definitions(stm_log PUBLIC STM_LOG_ENABLED=$<BOOL:${CONFIG_LOG_ENABLED}>)
-add_subdirectory(main)
-```
+这些材料按任务读取，不需要将全部模板和参考文档放入常驻上下文。Skill 的 FetchContent 依赖与 stm32-hal-lib 总仓库的固定组件组合分别管理，不能混用两版 stm_log 的接口或重复创建同名 target。
 
-`main/CMakeLists.txt` 只需 `target_link_libraries(${CMAKE_PROJECT_NAME} stm_log)`。RTT 的 `segger_rtt` target 和头文件路径由 stm_log 的 PUBLIC 依赖传递；不再在根 CMake 单独 FetchContent 或包装 RTT。
+## 许可证
 
-v3 中不再使用 `STM_LOG_HAL_HEADER`、`STM_LOG_LINK_CUBEMX` 或 `stm_log_init(&huart1, ...)`。
-
-### UART 模板
-
-```c
-static void uart_output(const char *data, uint16_t len)
-{
-    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
-}
-
-stm_log_set_tick(HAL_GetTick);
-stm_log_init_output(uart_output, STM_LOG_LVL_INFO);
-```
-
-### RTT 模板
-
-```cmake
-set(STM_LOG_WITH_RTT ON)
-```
-
-```c
-static void rtt_output(const char *data, uint16_t len)
-{
-    SEGGER_RTT_Write(0, data, len);
-}
-
-SEGGER_RTT_Init();
-stm_log_set_tick(HAL_GetTick);
-stm_log_init_output(rtt_output, STM_LOG_LVL_INFO);
-```
-
-完整模板位于 `assets/`，详细依赖说明见 [references/stm-log-config.md](references/stm-log-config.md) 和 [references/rtt-setup.md](references/rtt-setup.md)。
-
-## 源码位置和升级
-
-`SOURCE_DIR` 指定源码存放位置，不代表已有目录会跳过 Git 更新；FetchContent 仍管理固定 tag。离线时先准备匹配版本的完整源码，并设置本地覆盖：
-
-```bash
-cmake --preset Debug -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"
-```
-
-本地覆盖时由应用维护源码版本；不要通过删除依赖目录处理升级，先检查并保留未提交修改。
-
-## 验证
-
-```bash
-cmake -S . -B build/Debug -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-cmake --build build/Debug
-```
-
-若看到 `undefined reference to stm_log_init`，说明业务代码仍使用旧 v2 API；改为输出回调、`stm_log_set_tick` 和 `stm_log_init_output`。若 RTT 符号缺失，确认设置了 `STM_LOG_WITH_RTT=ON`。
-
-## 模板文件
-
-| 文件 | 用途 |
-|---|---|
-| `assets/CMakeLists.txt` | `main/` 的构建入口，只链接 stm_log |
-| `assets/app_main.c` | FreeRTOS + UART |
-| `assets/app_main_bare.c` | 裸机 + UART |
-| `assets/app_main_rtt.c` | FreeRTOS + RTT |
-| `assets/app_main_bare_rtt.c` | 裸机 + RTT |
-| `references/CMake-integration.md` | CMake 和 CubeMX 边界 |
-| `references/release-build.md` | 日志编译开关 |
-
-## License
-
-MIT —— 见 [LICENSE](LICENSE)。
+[MIT](LICENSE)。本技能在独立仓库维护；在其他仓库中作为子模块分发时，修改与引用更新分别管理。

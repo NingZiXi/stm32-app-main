@@ -49,29 +49,19 @@ endif()
 
 ## 应用初始化
 
-UART 和 RTT 都是应用回调：
-
-```c
-static void output(const char *data, uint16_t len)
-{
-    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
-}
-
-stm_log_set_tick(HAL_GetTick);
-stm_log_init_output(output, STM_LOG_LVL_INFO);
-```
-
-RTT 回调改用 `SEGGER_RTT_Write`，并在此之前调用 `SEGGER_RTT_Init()`。`stm_log_init(&huart1, ...)` 已移除。
+UART/RTT 的输出与 tick 回调见 [日志配置](stm-log-config.md)，完整应用代码选择对应 assets 模板。入口只在目标工程已有 USER CODE 声明区和初始化后的调用区接入；实际任务/API 以生成代码为准，不重复复制本节的回调实现。
 
 ## FetchContent 路径
 
 `SOURCE_DIR` 将源码放在 `<root>/Lib/stm_log/`，编译产物仍在 `build/`。目录存在不代表跳过 Git 更新。离线时准备好 v3.0.0 源码，再显式设置本地覆盖：
 
 ```bash
-cmake --preset Debug -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"
+cmake --preset <实际配置预设> -DFETCHCONTENT_SOURCE_DIR_STM_LOG="C:/path/to/Lib/stm_log"
 ```
 
 ## 验证与错误
+
+以下是已有正确工具链设置的命令示例；实际工程有 preset 时优先使用其配置与构建预设，核对 binaryDir 和 ELF，不假定所有工程都使用相同目录。
 
 ```bash
 cmake -S <root> -B <root>/build -G Ninja -DCMAKE_BUILD_TYPE=Debug
